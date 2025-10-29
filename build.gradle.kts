@@ -25,6 +25,8 @@ dependencies {
     testImplementation(kotlin("test"))
     testImplementation(kotlin("test-junit5"))
     testImplementation(libs.r2dbc.h2)
+    testImplementation(libs.reactor.test)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
 
 tasks.test {

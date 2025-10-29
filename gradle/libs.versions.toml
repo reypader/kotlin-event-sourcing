@@ -3,9 +3,14 @@ kotlin = "2.2.21"
 kotlinx-serialization = "1.9.0"
 reactor-kotlin = "1.2.4"
 kotlin-coroutines = "1.10.2"
-
+r2dbc-pool = "1.0.2.RELEASE"
+r2dbc-h2 = "1.1.0.RELEASE"
 
 [libraries]
+# R2DBC
+r2dbc-pool = { module = "io.r2dbc:r2dbc-pool", version.ref = "r2dbc-pool" }
+r2dbc-h2 = { module = "io.r2dbc:r2dbc-h2", version.ref = "r2dbc-h2" }
+
 # Reactor
 reactor-kotlin-extensions = { module = "io.projectreactor.kotlin:reactor-kotlin-extensions", version.ref = "reactor-kotlin" }
 

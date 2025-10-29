@@ -13,6 +13,12 @@ repositories {
 
 dependencies {
     implementation(libs.kotlinx.json)
+
+
+    // Reactor
+    implementation(libs.kotlinx.coroutines.reactor)
+    implementation(libs.reactor.kotlin.extensions)
+
     // Test
     testImplementation(kotlin("test"))
     testImplementation(kotlin("test-junit5"))

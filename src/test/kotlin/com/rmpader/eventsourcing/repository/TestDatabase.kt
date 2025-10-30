@@ -5,6 +5,9 @@ import io.r2dbc.spi.ConnectionFactory
 import io.r2dbc.spi.ConnectionFactoryOptions
 import java.sql.Connection
 import java.sql.DriverManager
+import java.sql.Timestamp
+import java.time.OffsetDateTime
+import java.util.*
 
 object TestDatabase {
     fun createR2dbcConnectionFactory(): ConnectionFactory =
@@ -106,13 +109,20 @@ object TestDatabase {
     fun assertEventOutboxContains(
         eventId: String,
         eventData: String,
+        isClaimed: Boolean = false,
     ) {
         createJdbcConnection().use { connection ->
-            val sql = """
+            val sql =
+                """
                 SELECT COUNT(*) as CNT
                 FROM EVENT_OUTBOX
                 WHERE EVENT_ID = ? AND EVENT_DATA = ?
-            """
+            """ +
+                    if (isClaimed) {
+                        " AND CLAIM_ID IS NOT NULL AND CLAIMED_AT IS NOT NULL"
+                    } else {
+                        ""
+                    }
 
             connection.prepareStatement(sql).use { statement ->
                 statement.setString(1, eventId)
@@ -260,7 +270,7 @@ object TestDatabase {
         }
     }
 
-    fun insertOutboxDirect(
+    fun insertUnclaimedOutboxDirect(
         eventId: String,
         eventData: String,
     ) {
@@ -273,6 +283,27 @@ object TestDatabase {
             connection.prepareStatement(sql).use { statement ->
                 statement.setString(1, eventId)
                 statement.setString(2, eventData)
+                statement.executeUpdate()
+            }
+        }
+    }
+
+    fun insertClaimedOutboxDirect(
+        eventId: String,
+        eventData: String,
+        claimedAt: OffsetDateTime = OffsetDateTime.now(),
+    ) {
+        createJdbcConnection().use { connection ->
+            val sql = """
+                INSERT INTO EVENT_OUTBOX (EVENT_ID, EVENT_DATA, CLAIMED_AT, CLAIM_ID)
+                VALUES (?, ?, ?, ?)
+            """
+
+            connection.prepareStatement(sql).use { statement ->
+                statement.setString(1, eventId)
+                statement.setString(2, eventData)
+                statement.setTimestamp(3, Timestamp.from(claimedAt.toInstant()))
+                statement.setString(4, UUID.randomUUID().toString())
                 statement.executeUpdate()
             }
         }

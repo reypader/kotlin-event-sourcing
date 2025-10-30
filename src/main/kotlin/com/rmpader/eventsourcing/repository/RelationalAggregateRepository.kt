@@ -40,7 +40,7 @@ class RelationalAggregateRepository<E, S>(
                                     .bind(1, fromSequenceNumber)
                                     .execute(),
                             ).flatMap { result ->
-                                result.map { row, metadata ->
+                                result.map { row, _ ->
                                     AggregateRepository.EventRecord(
                                         entityId = row.get("ENTITY_ID", String::class.java)!!,
                                         event =
@@ -85,7 +85,7 @@ class RelationalAggregateRepository<E, S>(
                                     .execute(),
                             ).flatMap { result ->
                                 Mono.from(
-                                    result.map { row, metadata ->
+                                    result.map { row, _ ->
                                         AggregateRepository.SnapshotRecord(
                                             entityId = row.get("ENTITY_ID", String::class.java)!!,
                                             state =
@@ -216,7 +216,7 @@ class RelationalAggregateRepository<E, S>(
                     ).bind(0, claimId)
                     .execute(),
             ).flatMap { result ->
-                result.map { row, metadata ->
+                result.map { row, _ ->
                     AggregateRepository.OutboxRecord(
                         eventId = row.get("EVENT_ID", String::class.java)!!,
                         event =
@@ -243,7 +243,7 @@ class RelationalAggregateRepository<E, S>(
                                         SELECT EVENT_ID
                                         FROM EVENT_OUTBOX
                                         WHERE CLAIM_ID IS NULL
-                                        ORDER BY EVENT_ID
+                                        ORDER BY CREATED_AT ASC
                                         LIMIT $2
                                         FOR UPDATE SKIP LOCKED
                                     )

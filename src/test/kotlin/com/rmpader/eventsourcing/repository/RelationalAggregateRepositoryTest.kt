@@ -1,6 +1,7 @@
 package com.rmpader.eventsourcing.repository
 
 import io.r2dbc.spi.R2dbcDataIntegrityViolationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.Test
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -147,7 +149,7 @@ class RelationalAggregateRepositoryTest {
         runTest {
             // Given
             val entityId = "test-entity-orphan-outbox"
-            TestDatabase.insertOutboxDirect("$entityId|1", "orphan-event|99")
+            TestDatabase.insertUnclaimedOutboxDirect("$entityId|1", "orphan-event|99")
 
             TestDatabase.assertEventJournalCount(0L)
             TestDatabase.assertEventOutboxCount(1L)
@@ -195,26 +197,36 @@ class RelationalAggregateRepositoryTest {
         runTest {
             // Given
             val entityId = "test-entity-2"
-            TestDatabase.insertJournalDirect(entityId, "event-3|3", 3L)
-            TestDatabase.insertJournalDirect(entityId, "event-2|2", 2L)
-            TestDatabase.insertJournalDirect(entityId, "event-1|1", 1L)
+            (1L..3L).forEach {
+                TestDatabase.insertJournalDirect(entityId, "event-$it|$it", it)
+            }
 
             // When
             val events = repository.loadEvents(entityId, 1L).toList()
 
             // Then
             assertEquals(3, events.size)
-            assertEquals("event-1", events[0].event.name)
-            assertEquals(1, events[0].event.value)
-            assertEquals(1L, events[0].sequenceNumber)
+            (1..3).forEach {
+                assertEquals("event-$it", events[it - 1].event.name)
+                assertEquals(it, events[it - 1].event.value)
+                assertEquals(it.toLong(), events[it - 1].sequenceNumber)
+            }
+        }
 
-            assertEquals("event-2", events[1].event.name)
-            assertEquals(2, events[1].event.value)
-            assertEquals(2L, events[1].sequenceNumber)
+    @Test
+    fun `loadEvents should filter by fromSequenceNumber`() =
+        runTest {
+            val entityId = "test-entity"
+            (1L..3L).forEach {
+                TestDatabase.insertJournalDirect(entityId, "event-$it|$it", it)
+            }
 
-            assertEquals("event-3", events[2].event.name)
-            assertEquals(3, events[2].event.value)
-            assertEquals(3L, events[2].sequenceNumber)
+            // Should only return events 2 and 3
+            val events = repository.loadEvents(entityId, 2L).toList()
+
+            assertEquals(2, events.size)
+            assertEquals(2L, events[0].sequenceNumber)
+            assertEquals(3L, events[1].sequenceNumber)
         }
 
     @Test
@@ -251,9 +263,9 @@ class RelationalAggregateRepositoryTest {
 
             // Then
             TestDatabase.assertEventJournalCount(3L)
-            TestDatabase.assertEventJournalContains(entityId, "event-1|1", 1L)
-            TestDatabase.assertEventJournalContains(entityId, "event-2|2", 2L)
-            TestDatabase.assertEventJournalContains(entityId, "event-3|3", 3L)
+            (1L..3L).forEach {
+                TestDatabase.assertEventJournalContains(entityId, "event-$it|$it", it)
+            }
         }
 
     @Test
@@ -271,15 +283,30 @@ class RelationalAggregateRepositoryTest {
         }
 
     @Test
+    fun `loadLatestSnapshot should return latest snapshot`() =
+        runTest {
+            val entityId = "test-entity"
+            TestDatabase.insertSnapshotDirect(entityId, "status-1|1", 1L)
+            TestDatabase.insertSnapshotDirect(entityId, "status-5|5", 5L)
+            TestDatabase.insertSnapshotDirect(entityId, "status-3|3", 3L)
+
+            val snapshot = repository.loadLatestSnapshot(entityId)
+
+            assertNotNull(snapshot)
+            assertEquals(5L, snapshot.sequenceNumber)
+            assertEquals("status-5", snapshot.state.status)
+            assertEquals(5, snapshot.state.count)
+        }
+
+    @Test
     fun `deleteFromOutbox should delete only the specified event ID`() =
         runTest {
             // Given
             val entityId = "test-entity-2"
             val targetEventIds: List<String> = listOf("$entityId|3", "$entityId|2")
-            TestDatabase.insertOutboxDirect("$entityId|4", "event-4|4")
-            TestDatabase.insertOutboxDirect("$entityId|3", "event-3|3")
-            TestDatabase.insertOutboxDirect("$entityId|2", "event-2|2")
-            TestDatabase.insertOutboxDirect("$entityId|1", "event-1|1")
+            (1L..4L).forEach {
+                TestDatabase.insertUnclaimedOutboxDirect("$entityId|$it", "event-$it|$it")
+            }
 
             // When
             repository.deleteFromOutbox(targetEventIds.toSet())
@@ -291,13 +318,34 @@ class RelationalAggregateRepositoryTest {
         }
 
     @Test
+    fun `deleteFromOutbox should handle empty set`() =
+        runTest {
+            TestDatabase.insertUnclaimedOutboxDirect("test|1", "event-1|1")
+
+            repository.deleteFromOutbox(emptySet())
+
+            TestDatabase.assertEventOutboxCount(1L)
+        }
+
+    @Test
+    fun `deleteFromOutbox should delete both claimed and unclaimed records`() =
+        runTest {
+            TestDatabase.insertUnclaimedOutboxDirect("test|1", "event-1|1")
+            TestDatabase.insertClaimedOutboxDirect("test|2", "event-2|2")
+
+            repository.deleteFromOutbox(setOf("test|1", "test|2"))
+
+            TestDatabase.assertEventOutboxCount(0L)
+        }
+
+    @Test
     fun `pollOutbox should return events up to the specified limit (10 of 3)`() =
         runTest {
             // Given
             val entityId = "test-entity-2"
-            TestDatabase.insertOutboxDirect("$entityId|3", "event-3|3")
-            TestDatabase.insertOutboxDirect("$entityId|2", "event-2|2")
-            TestDatabase.insertOutboxDirect("$entityId|1", "event-1|1")
+            (1L..3L).forEach {
+                TestDatabase.insertUnclaimedOutboxDirect("$entityId|$it", "event-$it|$it")
+            }
 
             // When
             val outboxRecords = repository.pollOutbox(10).toList().sortedBy { it.eventId }
@@ -305,17 +353,11 @@ class RelationalAggregateRepositoryTest {
             // Then
             assertEquals(3, outboxRecords.size)
 
-            assertEquals("event-1", outboxRecords[0].event.name)
-            assertEquals(1, outboxRecords[0].event.value)
-            assertEquals("$entityId|1", outboxRecords[0].eventId)
-
-            assertEquals("event-2", outboxRecords[1].event.name)
-            assertEquals(2, outboxRecords[1].event.value)
-            assertEquals("$entityId|2", outboxRecords[1].eventId)
-
-            assertEquals("event-3", outboxRecords[2].event.name)
-            assertEquals(3, outboxRecords[2].event.value)
-            assertEquals("$entityId|3", outboxRecords[2].eventId)
+            (1..3).forEach {
+                assertEquals("event-$it", outboxRecords[it - 1].event.name)
+                assertEquals(it, outboxRecords[it - 1].event.value)
+                assertEquals("$entityId|$it", outboxRecords[it - 1].eventId)
+            }
         }
 
     @Test
@@ -323,17 +365,12 @@ class RelationalAggregateRepositoryTest {
         runTest {
             // Given
             val entityId = "test-entity-2"
-            TestDatabase.insertOutboxDirect("$entityId|11", "event-11|11")
-            TestDatabase.insertOutboxDirect("$entityId|10", "event-10|10")
-            TestDatabase.insertOutboxDirect("$entityId|9", "event-9|9")
-            TestDatabase.insertOutboxDirect("$entityId|8", "event-8|8")
-            TestDatabase.insertOutboxDirect("$entityId|7", "event-7|7")
-            TestDatabase.insertOutboxDirect("$entityId|6", "event-6|6")
-            TestDatabase.insertOutboxDirect("$entityId|5", "event-5|5")
-            TestDatabase.insertOutboxDirect("$entityId|4", "event-4|4")
-            TestDatabase.insertOutboxDirect("$entityId|3", "event-3|3")
-            TestDatabase.insertOutboxDirect("$entityId|2", "event-2|2")
-            TestDatabase.insertOutboxDirect("$entityId|1", "event-1|1")
+            (1..11).forEach {
+                TestDatabase.insertUnclaimedOutboxDirect("$entityId|$it", "event-$it|$it")
+            }
+            (1..11).forEach {
+                TestDatabase.assertEventOutboxContains("$entityId|$it", "event-$it|$it", false)
+            }
 
             // When
             val outboxRecords = repository.pollOutbox(10).toList().sortedBy { it.eventId }
@@ -341,7 +378,11 @@ class RelationalAggregateRepositoryTest {
             // Then
             assertEquals(10, outboxRecords.size)
 
-            // no need to assert mapping
+            (1..10).forEach {
+                TestDatabase.assertEventOutboxContains("$entityId|$it", "event-$it|$it", true)
+            }
+            // sequence 11 is last to be inserted and since poll is querying for the oldest 10 records, this gets left out
+            TestDatabase.assertEventOutboxContains("$entityId|11", "event-11|11", false)
         }
 
     @Test
@@ -349,19 +390,14 @@ class RelationalAggregateRepositoryTest {
         runTest {
             // Prepare
             val entityId = "test-entity-2"
-            TestDatabase.insertOutboxDirect("$entityId|11", "event-11|11")
-            TestDatabase.insertOutboxDirect("$entityId|10", "event-10|10")
-            TestDatabase.insertOutboxDirect("$entityId|9", "event-9|9")
-            TestDatabase.insertOutboxDirect("$entityId|8", "event-8|8")
-            TestDatabase.insertOutboxDirect("$entityId|7", "event-7|7")
-            TestDatabase.insertOutboxDirect("$entityId|6", "event-6|6")
+            (6..11).forEach {
+                TestDatabase.insertUnclaimedOutboxDirect("$entityId|$it", "event-$it|$it")
+            }
             TestDatabase.lockRecordsThen {
                 // Given
-                TestDatabase.insertOutboxDirect("$entityId|5", "event-5|5")
-                TestDatabase.insertOutboxDirect("$entityId|4", "event-4|4")
-                TestDatabase.insertOutboxDirect("$entityId|3", "event-3|3")
-                TestDatabase.insertOutboxDirect("$entityId|2", "event-2|2")
-                TestDatabase.insertOutboxDirect("$entityId|1", "event-1|1")
+                (1..5).forEach {
+                    TestDatabase.insertUnclaimedOutboxDirect("$entityId|$it", "event-$it|$it")
+                }
 
                 // When
                 val outboxRecords = repository.pollOutbox(10).toList().sortedBy { it.eventId }
@@ -369,25 +405,11 @@ class RelationalAggregateRepositoryTest {
                 // Then
                 assertEquals(5, outboxRecords.size)
 
-                assertEquals("event-1", outboxRecords[0].event.name)
-                assertEquals(1, outboxRecords[0].event.value)
-                assertEquals("$entityId|1", outboxRecords[0].eventId)
-
-                assertEquals("event-2", outboxRecords[1].event.name)
-                assertEquals(2, outboxRecords[1].event.value)
-                assertEquals("$entityId|2", outboxRecords[1].eventId)
-
-                assertEquals("event-3", outboxRecords[2].event.name)
-                assertEquals(3, outboxRecords[2].event.value)
-                assertEquals("$entityId|3", outboxRecords[2].eventId)
-
-                assertEquals("event-4", outboxRecords[3].event.name)
-                assertEquals(4, outboxRecords[3].event.value)
-                assertEquals("$entityId|4", outboxRecords[3].eventId)
-
-                assertEquals("event-5", outboxRecords[4].event.name)
-                assertEquals(5, outboxRecords[4].event.value)
-                assertEquals("$entityId|5", outboxRecords[4].eventId)
+                (1..5).forEach {
+                    assertEquals("event-$it", outboxRecords[it - 1].event.name)
+                    assertEquals(it, outboxRecords[it - 1].event.value)
+                    assertEquals("$entityId|$it", outboxRecords[it - 1].eventId)
+                }
             }
         }
 
@@ -396,11 +418,11 @@ class RelationalAggregateRepositoryTest {
         runTest {
             // Prepare
             val entityId = "test-entity-2"
-            TestDatabase.insertOutboxDirect("$entityId|5", "event-5|5")
-            TestDatabase.insertOutboxDirect("$entityId|4", "event-4|4")
-            TestDatabase.insertOutboxDirect("$entityId|3", "event-3|3")
-            TestDatabase.insertOutboxDirect("$entityId|2", "event-2|2")
-            TestDatabase.insertOutboxDirect("$entityId|1", "event-1|1")
+            TestDatabase.insertUnclaimedOutboxDirect("$entityId|5", "event-5|5")
+            TestDatabase.insertUnclaimedOutboxDirect("$entityId|4", "event-4|4")
+            TestDatabase.insertUnclaimedOutboxDirect("$entityId|3", "event-3|3")
+            TestDatabase.insertUnclaimedOutboxDirect("$entityId|2", "event-2|2")
+            TestDatabase.insertUnclaimedOutboxDirect("$entityId|1", "event-1|1")
             TestDatabase.lockRecordsThen {
                 // Given
                 // nothing
@@ -414,15 +436,22 @@ class RelationalAggregateRepositoryTest {
         }
 
     @Test
+    fun `pollOutbox should return empty flow when outbox is empty`() =
+        runTest {
+            val records = repository.pollOutbox(10).toList()
+            assertEquals(0, records.size)
+        }
+
+    @Test
     fun `pollOutbox should return nothing when all records are claimed`() =
         runTest {
             // Given
             val entityId = "test-entity-2"
-            TestDatabase.insertOutboxDirect("$entityId|5", "event-5|5")
-            TestDatabase.insertOutboxDirect("$entityId|4", "event-4|4")
-            TestDatabase.insertOutboxDirect("$entityId|3", "event-3|3")
-            TestDatabase.insertOutboxDirect("$entityId|2", "event-2|2")
-            TestDatabase.insertOutboxDirect("$entityId|1", "event-1|1")
+            TestDatabase.insertUnclaimedOutboxDirect("$entityId|5", "event-5|5")
+            TestDatabase.insertUnclaimedOutboxDirect("$entityId|4", "event-4|4")
+            TestDatabase.insertUnclaimedOutboxDirect("$entityId|3", "event-3|3")
+            TestDatabase.insertUnclaimedOutboxDirect("$entityId|2", "event-2|2")
+            TestDatabase.insertUnclaimedOutboxDirect("$entityId|1", "event-1|1")
             repository.pollOutbox(10).toList().sortedBy { it.eventId }
 
             // When

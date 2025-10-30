@@ -283,7 +283,7 @@ class RelationalAggregateRepository<E, S>(
             ).flatMap { Mono.from(it.rowsUpdated) }
             .then(Mono.empty())
 
-    private fun write(
+    private inline fun write(
         expectedRows: Long = 1L,
         block: () -> Mono<Result>,
     ): Mono<Unit> =

@@ -8,18 +8,22 @@ interface AggregateRepository<E, S> {
         val entityId: String,
         val event: E,
         val sequenceNumber: Long,
-        val timestamp: OffsetDateTime
+        val timestamp: OffsetDateTime,
     )
 
     data class SnapshotRecord<S>(
         val entityId: String,
         val state: S,
         val sequenceNumber: Long,
-        val timestamp: OffsetDateTime
+        val timestamp: OffsetDateTime,
     )
 
-    fun loadEvents(entityId: String, fromSequenceNumber: Long): Flow<EventRecord<E>>
-    suspend fun loadLatestSnapshot(entityId: String): SnapshotRecord<S>?
-    suspend fun storeEvent(eventRecord: EventRecord<E>)
+    fun loadEvents(
+        entityId: String,
+        fromSequenceNumber: Long,
+    ): Flow<EventRecord<E>>
 
+    suspend fun loadLatestSnapshot(entityId: String): SnapshotRecord<S>?
+
+    suspend fun storeEvent(eventRecord: EventRecord<E>)
 }

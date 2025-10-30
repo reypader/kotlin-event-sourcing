@@ -8,36 +8,37 @@ import java.sql.DriverManager
 import java.util.UUID
 
 object TestDatabase {
-
-    fun createR2dbcConnectionFactory(): ConnectionFactory {
-        return ConnectionFactories.get(
-            ConnectionFactoryOptions.builder()
+    fun createR2dbcConnectionFactory(): ConnectionFactory =
+        ConnectionFactories.get(
+            ConnectionFactoryOptions
+                .builder()
                 .option(ConnectionFactoryOptions.DRIVER, "h2")
                 .option(ConnectionFactoryOptions.PROTOCOL, "mem")
                 .option(ConnectionFactoryOptions.DATABASE, "testdb;DB_CLOSE_DELAY=-1")
                 .option(ConnectionFactoryOptions.USER, "sa")
                 .option(ConnectionFactoryOptions.PASSWORD, "")
-                .build()
+                .build(),
         )
-    }
 
-    private fun createJdbcConnection(): Connection {
-        return DriverManager.getConnection(
+    private fun createJdbcConnection(): Connection =
+        DriverManager.getConnection(
             "jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1",
             "sa",
-            ""
+            "",
         )
-    }
 
     fun initializeSchema() {
-        val schemaSql = TestDatabase::class.java.classLoader
-            .getResource("h2schema.sql")
-            ?.readText()
-            ?: throw IllegalStateException("Could not find h2schema.sql in test resources")
+        val schemaSql =
+            TestDatabase::class.java.classLoader
+                .getResource("h2schema.sql")
+                ?.readText()
+                ?: throw IllegalStateException("Could not find h2schema.sql in test resources")
 
-        val statements = schemaSql.split(";")
-            .map { it.trim() }
-            .filter { it.isNotBlank() && !it.startsWith("--") }
+        val statements =
+            schemaSql
+                .split(";")
+                .map { it.trim() }
+                .filter { it.isNotBlank() && !it.startsWith("--") }
 
         createJdbcConnection().use { connection ->
             connection.autoCommit = false
@@ -65,14 +66,13 @@ object TestDatabase {
         }
     }
 
-
     /**
      * Assert that exactly one event exists in EVENT_JOURNAL with the specified values
      */
     fun assertEventJournalContains(
         entityId: String,
         eventData: String,
-        sequenceNumber: Long
+        sequenceNumber: Long,
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
@@ -92,8 +92,8 @@ object TestDatabase {
                     if (count != 1L) {
                         throw AssertionError(
                             "Expected exactly 1 event in EVENT_JOURNAL with " +
-                                    "entityId='$entityId', eventData='$eventData', sequenceNumber=$sequenceNumber, " +
-                                    "but found $count"
+                                "entityId='$entityId', eventData='$eventData', sequenceNumber=$sequenceNumber, " +
+                                "but found $count",
                         )
                     }
                 }
@@ -108,7 +108,7 @@ object TestDatabase {
         entityId: String,
         eventData: String,
         sequenceNumber: Long,
-        processed: Boolean = false
+        processed: Boolean = false,
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
@@ -129,8 +129,8 @@ object TestDatabase {
                     if (count != 1L) {
                         throw AssertionError(
                             "Expected exactly 1 event in EVENT_OUTBOX with " +
-                                    "entityId='$entityId', eventData='$eventData', " +
-                                    "sequenceNumber=$sequenceNumber, processed=$processed, but found $count"
+                                "entityId='$entityId', eventData='$eventData', " +
+                                "sequenceNumber=$sequenceNumber, processed=$processed, but found $count",
                         )
                     }
                 }
@@ -144,7 +144,7 @@ object TestDatabase {
     fun assertSnapshotContains(
         entityId: String,
         stateData: String,
-        sequenceNumber: Long
+        sequenceNumber: Long,
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
@@ -164,8 +164,8 @@ object TestDatabase {
                     if (count != 1L) {
                         throw AssertionError(
                             "Expected snapshot with entityId='$entityId', " +
-                                    "stateData='$stateData', sequenceNumber=$sequenceNumber, " +
-                                    "but found $count"
+                                "stateData='$stateData', sequenceNumber=$sequenceNumber, " +
+                                "but found $count",
                         )
                     }
                 }
@@ -189,14 +189,13 @@ object TestDatabase {
                     val count = rs.getLong("CNT")
                     if (count != expectedCount) {
                         throw AssertionError(
-                            "Expected $expectedCount events in EVENT_JOURNAL, but found $count"
+                            "Expected $expectedCount events in EVENT_JOURNAL, but found $count",
                         )
                     }
                 }
             }
         }
     }
-
 
     /**
      * Assert the total count of events for an entity in EVENT_OUTBOX
@@ -215,7 +214,7 @@ object TestDatabase {
                     val count = rs.getLong("CNT")
                     if (count != expectedCount) {
                         throw AssertionError(
-                            "Expected $expectedCount events in EVENT_OUTBOX, but found $count"
+                            "Expected $expectedCount events in EVENT_OUTBOX, but found $count",
                         )
                     }
                 }
@@ -239,7 +238,7 @@ object TestDatabase {
                     val count = rs.getLong("CNT")
                     if (count != expectedCount) {
                         throw AssertionError(
-                            "Expected $expectedCount snapshots, but found $count"
+                            "Expected $expectedCount snapshots, but found $count",
                         )
                     }
                 }
@@ -247,11 +246,10 @@ object TestDatabase {
         }
     }
 
-
     fun insertJournalDirect(
         entityId: String,
         eventData: String,
-        sequenceNumber: Long
+        sequenceNumber: Long,
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
@@ -272,7 +270,7 @@ object TestDatabase {
         entityId: String,
         eventData: String,
         sequenceNumber: Long,
-        eventId: String = UUID.randomUUID().toString()
+        eventId: String = UUID.randomUUID().toString(),
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
@@ -293,7 +291,7 @@ object TestDatabase {
     fun insertSnapshotDirect(
         entityId: String,
         stateData: String,
-        sequenceNumber: Long
+        sequenceNumber: Long,
     ) {
         createJdbcConnection().use { connection ->
             val sql = """

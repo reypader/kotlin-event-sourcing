@@ -6,6 +6,7 @@ kotlin-coroutines = "1.10.2"
 r2dbc-pool = "1.0.2.RELEASE"
 r2dbc-h2 = "1.1.0.RELEASE"
 reactor = "3.7.12"
+ktlint = "13.1.0"
 
 [libraries]
 # R2DBC
@@ -25,3 +26,4 @@ kotlinx-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", ve
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint"}

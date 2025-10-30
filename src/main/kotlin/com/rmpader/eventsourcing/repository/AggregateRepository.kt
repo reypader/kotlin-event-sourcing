@@ -26,4 +26,6 @@ interface AggregateRepository<E, S> {
     suspend fun loadLatestSnapshot(entityId: String): SnapshotRecord<S>?
 
     suspend fun storeEvent(eventRecord: EventRecord<E>)
+
+    suspend fun deleteFromOutbox(eventId: String)
 }

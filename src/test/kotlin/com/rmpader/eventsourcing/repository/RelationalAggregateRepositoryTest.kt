@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
+import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -37,7 +38,7 @@ class RelationalAggregateRepositoryTest {
     @Test
     fun `storeEvent should persist event to journal and outbox transactionally`() =
         runTest {
-            // Given some event to be persisted
+            // Given
             val entityId = "test-entity-1"
             val event = TestEvent("test-event", 42)
             val eventRecord =
@@ -135,12 +136,11 @@ class RelationalAggregateRepositoryTest {
                 )
                 throw AssertionError("Expected constraint violation due to existing journal entry")
             } catch (e: Exception) {
-                println(e.stackTraceToString())
                 assertTrue(e is EventSourcingRepositoryException)
                 assertTrue(e.cause is R2dbcDataIntegrityViolationException)
             }
 
-            // Then orphaned journal entry still exists, no outbox entry created
+            // Then
             TestDatabase.assertEventJournalCount(1L)
             TestDatabase.assertEventOutboxCount(0L)
 
@@ -151,15 +151,14 @@ class RelationalAggregateRepositoryTest {
     @Test
     fun `storeEvent should rollback when conflicting with an orphan outbox`() =
         runTest {
-            // Given orphaned outbox entry (inconsistent state)
+            // Given
             val entityId = "test-entity-orphan-outbox"
             TestDatabase.insertOutboxDirect(entityId, "orphan-event|99", 1L)
 
-            // Verify inconsistent state: outbox has entry, journal doesn't
             TestDatabase.assertEventJournalCount(0L)
             TestDatabase.assertEventOutboxCount(1L)
 
-            // When attempt to store event with same sequence number
+            // When
             try {
                 repository.storeEvent(
                     AggregateRepository.EventRecord(
@@ -171,15 +170,11 @@ class RelationalAggregateRepositoryTest {
                 )
                 throw AssertionError("Expected constraint violation due to existing outbox entry")
             } catch (e: Exception) {
-                // Expected outbox constraint violation
-                assertTrue(
-                    e.message?.contains("duplicate", ignoreCase = true) == true ||
-                        e.message?.contains("unique", ignoreCase = true) == true ||
-                        e.message?.contains("constraint", ignoreCase = true) == true,
-                )
+                assertTrue(e is EventSourcingRepositoryException)
+                assertTrue(e.cause is R2dbcDataIntegrityViolationException)
             }
 
-            // Then orphaned outbox entry still exists, no journal entry created
+            // Then
             TestDatabase.assertEventJournalCount(0L)
             TestDatabase.assertEventOutboxCount(1L)
 
@@ -204,16 +199,16 @@ class RelationalAggregateRepositoryTest {
     @Test
     fun `loadEvents should return events ordered by sequence number`() =
         runTest {
-            // Given insert using JDBC
+            // Given
             val entityId = "test-entity-2"
             TestDatabase.insertJournalDirect(entityId, "event-3|3", 3L)
             TestDatabase.insertJournalDirect(entityId, "event-2|2", 2L)
             TestDatabase.insertJournalDirect(entityId, "event-1|1", 1L)
 
-            // When use R2DBC repository to load
+            // When
             val events = repository.loadEvents(entityId, 1L).toList()
 
-            // Then verify repository returned correct data
+            // Then
             assertEquals(3, events.size)
             assertEquals("event-1", events[0].event.name)
             assertEquals(1, events[0].event.value)
@@ -260,7 +255,7 @@ class RelationalAggregateRepositoryTest {
                 ),
             )
 
-            // Then assert exact database state
+            // Then
             TestDatabase.assertEventJournalCount(3L)
             TestDatabase.assertEventJournalContains(entityId, "event-1|1", 1L)
             TestDatabase.assertEventJournalContains(entityId, "event-2|2", 2L)
@@ -279,5 +274,24 @@ class RelationalAggregateRepositoryTest {
             // Then
             assertNull(snapshot)
             TestDatabase.assertSnapshotCount(0)
+        }
+
+    @Test
+    fun `deleteFromOutbox should delete only the specified event ID`() =
+        runTest {
+            // Given
+            val targetEventId = UUID.randomUUID().toString()
+            val entityId = "test-entity-2"
+            TestDatabase.insertOutboxDirect(entityId, "event-3|3", 3L)
+            TestDatabase.insertOutboxDirect(entityId, "event-2|2", 2L, targetEventId)
+            TestDatabase.insertOutboxDirect(entityId, "event-1|1", 1L)
+
+            // When
+            repository.deleteFromOutbox(targetEventId)
+
+            // Then
+            TestDatabase.assertEventOutboxCount(2L)
+            TestDatabase.assertEventOutboxContains(entityId, "event-3|3", 3L)
+            TestDatabase.assertEventOutboxContains(entityId, "event-1|1", 1L)
         }
 }

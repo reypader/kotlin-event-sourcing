@@ -139,13 +139,43 @@ class RelationalAggregateRepository<E, S>(
         }
     }
 
+    override suspend fun deleteFromOutbox(eventId: String) {
+        try {
+            Mono
+                .usingWhen(
+                    Mono.from(connectionFactory.create()),
+                    { connection ->
+                        write {
+                            Mono
+                                .from(
+                                    connection
+                                        .createStatement(
+                                            """
+                                            DELETE 
+                                            FROM EVENT_OUTBOX
+                                            WHERE EVENT_ID=$1
+                                            """,
+                                        ).bind(0, eventId)
+                                        .execute(),
+                                )
+                        }.then(Mono.just(Unit))
+                    },
+                    { connection -> Mono.from(connection.close()) },
+                    { connection, error -> Mono.from(connection.close()) },
+                    { connection -> Mono.from(connection.close()) },
+                ).awaitSingle()
+        } catch (e: Exception) {
+            throw EventSourcingRepositoryException(e)
+        }
+    }
+
     private fun write(block: () -> Mono<Result>): Mono<Unit> =
         block()
             .flatMap { Mono.from(it.rowsUpdated) }
             .flatMap { rowsAffected ->
                 if (rowsAffected != 1L) {
                     Mono.error(
-                        IllegalStateException("Expected 1 row inserted into event_journal, but got $rowsAffected"),
+                        IllegalStateException("Expected 1 row affected in event_journal, but got $rowsAffected"),
                     )
                 } else {
                     Mono.empty()

@@ -1,8 +1,5 @@
 package com.rmpader.eventsourcing.repository
 
-import com.rmpader.com.rmpader.eventsourcing.repository.EventSourcingRepositoryException
-import com.rmpader.evensourcing.AggregateRepository
-import com.rmpader.evensourcing.RelationalAggregateRepository
 import io.r2dbc.spi.R2dbcDataIntegrityViolationException
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
@@ -11,7 +8,6 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
-import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -60,10 +56,8 @@ class RelationalAggregateRepositoryTest {
             )
 
             TestDatabase.assertEventOutboxContains(
-                entityId = entityId,
+                eventId = "$entityId|1",
                 eventData = "test-event|42",
-                sequenceNumber = 1L,
-                processed = false,
             )
 
             TestDatabase.assertEventJournalCount(1L)
@@ -110,7 +104,7 @@ class RelationalAggregateRepositoryTest {
             TestDatabase.assertEventOutboxCount(1L)
 
             TestDatabase.assertEventJournalContains(entityId, "event-1|1", 1L)
-            TestDatabase.assertEventOutboxContains(entityId, "event-1|1", 1L, false)
+            TestDatabase.assertEventOutboxContains("$entityId|1", "event-1|1")
         }
 
     @Test
@@ -153,7 +147,7 @@ class RelationalAggregateRepositoryTest {
         runTest {
             // Given
             val entityId = "test-entity-orphan-outbox"
-            TestDatabase.insertOutboxDirect(entityId, "orphan-event|99", 1L)
+            TestDatabase.insertOutboxDirect("$entityId|1", "orphan-event|99")
 
             TestDatabase.assertEventJournalCount(0L)
             TestDatabase.assertEventOutboxCount(1L)
@@ -179,7 +173,7 @@ class RelationalAggregateRepositoryTest {
             TestDatabase.assertEventOutboxCount(1L)
 
             // Original orphaned outbox data intact
-            TestDatabase.assertEventOutboxContains(entityId, "orphan-event|99", 1L, false)
+            TestDatabase.assertEventOutboxContains("$entityId|1", "orphan-event|99")
         }
 
     @Test
@@ -280,18 +274,161 @@ class RelationalAggregateRepositoryTest {
     fun `deleteFromOutbox should delete only the specified event ID`() =
         runTest {
             // Given
-            val targetEventId = UUID.randomUUID().toString()
             val entityId = "test-entity-2"
-            TestDatabase.insertOutboxDirect(entityId, "event-3|3", 3L)
-            TestDatabase.insertOutboxDirect(entityId, "event-2|2", 2L, targetEventId)
-            TestDatabase.insertOutboxDirect(entityId, "event-1|1", 1L)
+            val targetEventIds: List<String> = listOf("$entityId|3", "$entityId|2")
+            TestDatabase.insertOutboxDirect("$entityId|4", "event-4|4")
+            TestDatabase.insertOutboxDirect("$entityId|3", "event-3|3")
+            TestDatabase.insertOutboxDirect("$entityId|2", "event-2|2")
+            TestDatabase.insertOutboxDirect("$entityId|1", "event-1|1")
 
             // When
-            repository.deleteFromOutbox(targetEventId)
+            repository.deleteFromOutbox(targetEventIds.toSet())
 
             // Then
             TestDatabase.assertEventOutboxCount(2L)
-            TestDatabase.assertEventOutboxContains(entityId, "event-3|3", 3L)
-            TestDatabase.assertEventOutboxContains(entityId, "event-1|1", 1L)
+            TestDatabase.assertEventOutboxContains("$entityId|4", "event-4|4")
+            TestDatabase.assertEventOutboxContains("$entityId|1", "event-1|1")
+        }
+
+    @Test
+    fun `pollOutbox should return events up to the specified limit (10 of 3)`() =
+        runTest {
+            // Given
+            val entityId = "test-entity-2"
+            TestDatabase.insertOutboxDirect("$entityId|3", "event-3|3")
+            TestDatabase.insertOutboxDirect("$entityId|2", "event-2|2")
+            TestDatabase.insertOutboxDirect("$entityId|1", "event-1|1")
+
+            // When
+            val outboxRecords = repository.pollOutbox(10).toList().sortedBy { it.eventId }
+
+            // Then
+            assertEquals(3, outboxRecords.size)
+
+            assertEquals("event-1", outboxRecords[0].event.name)
+            assertEquals(1, outboxRecords[0].event.value)
+            assertEquals("$entityId|1", outboxRecords[0].eventId)
+
+            assertEquals("event-2", outboxRecords[1].event.name)
+            assertEquals(2, outboxRecords[1].event.value)
+            assertEquals("$entityId|2", outboxRecords[1].eventId)
+
+            assertEquals("event-3", outboxRecords[2].event.name)
+            assertEquals(3, outboxRecords[2].event.value)
+            assertEquals("$entityId|3", outboxRecords[2].eventId)
+        }
+
+    @Test
+    fun `pollOutbox should return events up to the specified limit (10 of 11)`() =
+        runTest {
+            // Given
+            val entityId = "test-entity-2"
+            TestDatabase.insertOutboxDirect("$entityId|11", "event-11|11")
+            TestDatabase.insertOutboxDirect("$entityId|10", "event-10|10")
+            TestDatabase.insertOutboxDirect("$entityId|9", "event-9|9")
+            TestDatabase.insertOutboxDirect("$entityId|8", "event-8|8")
+            TestDatabase.insertOutboxDirect("$entityId|7", "event-7|7")
+            TestDatabase.insertOutboxDirect("$entityId|6", "event-6|6")
+            TestDatabase.insertOutboxDirect("$entityId|5", "event-5|5")
+            TestDatabase.insertOutboxDirect("$entityId|4", "event-4|4")
+            TestDatabase.insertOutboxDirect("$entityId|3", "event-3|3")
+            TestDatabase.insertOutboxDirect("$entityId|2", "event-2|2")
+            TestDatabase.insertOutboxDirect("$entityId|1", "event-1|1")
+
+            // When
+            val outboxRecords = repository.pollOutbox(10).toList().sortedBy { it.eventId }
+
+            // Then
+            assertEquals(10, outboxRecords.size)
+
+            // no need to assert mapping
+        }
+
+    @Test
+    fun `pollOutbox should return events excluding locked entries`() =
+        runTest {
+            // Prepare
+            val entityId = "test-entity-2"
+            TestDatabase.insertOutboxDirect("$entityId|11", "event-11|11")
+            TestDatabase.insertOutboxDirect("$entityId|10", "event-10|10")
+            TestDatabase.insertOutboxDirect("$entityId|9", "event-9|9")
+            TestDatabase.insertOutboxDirect("$entityId|8", "event-8|8")
+            TestDatabase.insertOutboxDirect("$entityId|7", "event-7|7")
+            TestDatabase.insertOutboxDirect("$entityId|6", "event-6|6")
+            TestDatabase.lockRecordsThen {
+                // Given
+                TestDatabase.insertOutboxDirect("$entityId|5", "event-5|5")
+                TestDatabase.insertOutboxDirect("$entityId|4", "event-4|4")
+                TestDatabase.insertOutboxDirect("$entityId|3", "event-3|3")
+                TestDatabase.insertOutboxDirect("$entityId|2", "event-2|2")
+                TestDatabase.insertOutboxDirect("$entityId|1", "event-1|1")
+
+                // When
+                val outboxRecords = repository.pollOutbox(10).toList().sortedBy { it.eventId }
+
+                // Then
+                assertEquals(5, outboxRecords.size)
+
+                assertEquals("event-1", outboxRecords[0].event.name)
+                assertEquals(1, outboxRecords[0].event.value)
+                assertEquals("$entityId|1", outboxRecords[0].eventId)
+
+                assertEquals("event-2", outboxRecords[1].event.name)
+                assertEquals(2, outboxRecords[1].event.value)
+                assertEquals("$entityId|2", outboxRecords[1].eventId)
+
+                assertEquals("event-3", outboxRecords[2].event.name)
+                assertEquals(3, outboxRecords[2].event.value)
+                assertEquals("$entityId|3", outboxRecords[2].eventId)
+
+                assertEquals("event-4", outboxRecords[3].event.name)
+                assertEquals(4, outboxRecords[3].event.value)
+                assertEquals("$entityId|4", outboxRecords[3].eventId)
+
+                assertEquals("event-5", outboxRecords[4].event.name)
+                assertEquals(5, outboxRecords[4].event.value)
+                assertEquals("$entityId|5", outboxRecords[4].eventId)
+            }
+        }
+
+    @Test
+    fun `pollOutbox should return nothing when all records are locked`() =
+        runTest {
+            // Prepare
+            val entityId = "test-entity-2"
+            TestDatabase.insertOutboxDirect("$entityId|5", "event-5|5")
+            TestDatabase.insertOutboxDirect("$entityId|4", "event-4|4")
+            TestDatabase.insertOutboxDirect("$entityId|3", "event-3|3")
+            TestDatabase.insertOutboxDirect("$entityId|2", "event-2|2")
+            TestDatabase.insertOutboxDirect("$entityId|1", "event-1|1")
+            TestDatabase.lockRecordsThen {
+                // Given
+                // nothing
+
+                // When
+                val outboxRecords = repository.pollOutbox(10).toList().sortedBy { it.eventId }
+
+                // Then
+                assertEquals(0, outboxRecords.size)
+            }
+        }
+
+    @Test
+    fun `pollOutbox should return nothing when all records are claimed`() =
+        runTest {
+            // Given
+            val entityId = "test-entity-2"
+            TestDatabase.insertOutboxDirect("$entityId|5", "event-5|5")
+            TestDatabase.insertOutboxDirect("$entityId|4", "event-4|4")
+            TestDatabase.insertOutboxDirect("$entityId|3", "event-3|3")
+            TestDatabase.insertOutboxDirect("$entityId|2", "event-2|2")
+            TestDatabase.insertOutboxDirect("$entityId|1", "event-1|1")
+            repository.pollOutbox(10).toList().sortedBy { it.eventId }
+
+            // When
+            val outboxRecords = repository.pollOutbox(10).toList().sortedBy { it.eventId }
+
+            // Then
+            assertEquals(0, outboxRecords.size)
         }
 }

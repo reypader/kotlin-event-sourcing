@@ -1,6 +1,6 @@
 package com.rmpader.eventsourcing.repository
 
-import com.rmpader.com.rmpader.eventsourcing.EventSerializer
+import com.rmpader.eventsourcing.EventSerializer
 
 data class TestEvent(
     val name: String,

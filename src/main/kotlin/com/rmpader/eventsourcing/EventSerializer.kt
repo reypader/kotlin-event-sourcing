@@ -1,4 +1,4 @@
-package com.rmpader.com.rmpader.eventsourcing
+package com.rmpader.eventsourcing
 
 interface EventSerializer<E> {
     fun serialize(event: E): String

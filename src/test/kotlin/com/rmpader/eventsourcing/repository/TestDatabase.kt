@@ -5,7 +5,6 @@ import io.r2dbc.spi.ConnectionFactory
 import io.r2dbc.spi.ConnectionFactoryOptions
 import java.sql.Connection
 import java.sql.DriverManager
-import java.util.UUID
 
 object TestDatabase {
     fun createR2dbcConnectionFactory(): ConnectionFactory =
@@ -105,23 +104,19 @@ object TestDatabase {
      * Assert that exactly one event exists in EVENT_OUTBOX with the specified values
      */
     fun assertEventOutboxContains(
-        entityId: String,
+        eventId: String,
         eventData: String,
-        sequenceNumber: Long,
-        processed: Boolean = false,
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
                 SELECT COUNT(*) as CNT
                 FROM EVENT_OUTBOX
-                WHERE ENTITY_ID = ? AND EVENT_DATA = ? AND SEQUENCE_NUMBER = ? AND PROCESSED = ?
+                WHERE EVENT_ID = ? AND EVENT_DATA = ?
             """
 
             connection.prepareStatement(sql).use { statement ->
-                statement.setString(1, entityId)
+                statement.setString(1, eventId)
                 statement.setString(2, eventData)
-                statement.setLong(3, sequenceNumber)
-                statement.setBoolean(4, processed)
 
                 statement.executeQuery().use { rs ->
                     rs.next()
@@ -129,8 +124,7 @@ object TestDatabase {
                     if (count != 1L) {
                         throw AssertionError(
                             "Expected exactly 1 event in EVENT_OUTBOX with " +
-                                "entityId='$entityId', eventData='$eventData', " +
-                                "sequenceNumber=$sequenceNumber, processed=$processed, but found $count",
+                                "eventId='$eventId', eventData='$eventData'",
                         )
                     }
                 }
@@ -253,8 +247,8 @@ object TestDatabase {
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
-                INSERT INTO EVENT_JOURNAL (ENTITY_ID, SEQUENCE_NUMBER, EVENT_DATA, PARTITION_RESIDENCE)
-                VALUES (?, ?, ?, 0)
+                INSERT INTO EVENT_JOURNAL (ENTITY_ID, SEQUENCE_NUMBER, EVENT_DATA)
+                VALUES (?, ?, ?)
             """
 
             connection.prepareStatement(sql).use { statement ->
@@ -267,22 +261,18 @@ object TestDatabase {
     }
 
     fun insertOutboxDirect(
-        entityId: String,
+        eventId: String,
         eventData: String,
-        sequenceNumber: Long,
-        eventId: String = UUID.randomUUID().toString(),
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
-                INSERT INTO EVENT_OUTBOX (ENTITY_ID, SEQUENCE_NUMBER, EVENT_DATA, EVENT_ID, PROCESSED, PARTITION_RESIDENCE)
-                VALUES (?, ?, ?, ?, FALSE, 0)
+                INSERT INTO EVENT_OUTBOX (EVENT_ID, EVENT_DATA)
+                VALUES (?, ?)
             """
 
             connection.prepareStatement(sql).use { statement ->
-                statement.setString(1, entityId)
-                statement.setLong(2, sequenceNumber)
-                statement.setString(3, eventData)
-                statement.setString(4, eventId)
+                statement.setString(1, eventId)
+                statement.setString(2, eventData)
                 statement.executeUpdate()
             }
         }
@@ -305,6 +295,19 @@ object TestDatabase {
                 statement.setString(3, stateData)
                 statement.executeUpdate()
             }
+        }
+    }
+
+    suspend fun lockRecordsThen(block: suspend () -> Unit) {
+        createJdbcConnection().apply { autoCommit = false }.also {
+            val sql = """
+                SELECT * FROM EVENT_OUTBOX FOR UPDATE
+            """
+            it.prepareStatement(sql).use { statement ->
+                statement.execute()
+            }
+            block()
+            it.commit()
         }
     }
 }

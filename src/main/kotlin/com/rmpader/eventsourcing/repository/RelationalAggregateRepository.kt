@@ -1,7 +1,6 @@
-package com.rmpader.evensourcing
+package com.rmpader.eventsourcing.repository
 
-import com.rmpader.com.rmpader.eventsourcing.EventSerializer
-import com.rmpader.com.rmpader.eventsourcing.repository.EventSourcingRepositoryException
+import com.rmpader.eventsourcing.EventSerializer
 import io.r2dbc.spi.Connection
 import io.r2dbc.spi.ConnectionFactory
 import io.r2dbc.spi.Result
@@ -12,7 +11,6 @@ import kotlinx.coroutines.reactor.awaitSingleOrNull
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import java.time.ZoneOffset
-import java.util.UUID.randomUUID
 
 class RelationalAggregateRepository<E, S>(
     val connectionFactory: ConnectionFactory,
@@ -59,7 +57,7 @@ class RelationalAggregateRepository<E, S>(
                             }
                     },
                     { connection -> Mono.from(connection.close()) },
-                    { connection, error -> Mono.from(connection.close()) },
+                    { connection, _ -> Mono.from(connection.close()) },
                     { connection -> Mono.from(connection.close()) },
                 ).asFlow()
         } catch (ex: Exception) {
@@ -105,7 +103,7 @@ class RelationalAggregateRepository<E, S>(
                             }
                     },
                     { connection -> Mono.from(connection.close()) },
-                    { connection, error -> Mono.from(connection.close()) },
+                    { connection, _ -> Mono.from(connection.close()) },
                     { connection -> Mono.from(connection.close()) },
                 ).awaitSingleOrNull()
         } catch (ex: Exception) {
@@ -127,7 +125,7 @@ class RelationalAggregateRepository<E, S>(
                             .then(Mono.just(Unit))
                     },
                     { connection -> Mono.from(connection.close()) },
-                    { connection, error ->
+                    { connection, _ ->
                         Mono
                             .from(connection.rollbackTransaction())
                             .then(Mono.from(connection.close()))
@@ -139,29 +137,32 @@ class RelationalAggregateRepository<E, S>(
         }
     }
 
-    override suspend fun deleteFromOutbox(eventId: String) {
+    override suspend fun deleteFromOutbox(eventIds: Set<String>) {
         try {
+            if (eventIds.isEmpty()) return
+
             Mono
                 .usingWhen(
                     Mono.from(connectionFactory.create()),
                     { connection ->
-                        write {
-                            Mono
-                                .from(
-                                    connection
-                                        .createStatement(
-                                            """
-                                            DELETE 
-                                            FROM EVENT_OUTBOX
-                                            WHERE EVENT_ID=$1
-                                            """,
-                                        ).bind(0, eventId)
-                                        .execute(),
-                                )
+                        val sql = """
+                        DELETE 
+                        FROM EVENT_OUTBOX
+                        WHERE EVENT_ID IN (${eventIds.indices.joinToString(",") { $$"$$${it + 1}" }})
+                        """
+
+                        @Suppress("SqlSourceToSinkFlow")
+                        val statement = connection.createStatement(sql)
+                        eventIds.forEachIndexed { index, id ->
+                            statement.bind(index, id)
+                        }
+
+                        write(eventIds.size.toLong()) {
+                            Mono.from(statement.execute())
                         }.then(Mono.just(Unit))
                     },
                     { connection -> Mono.from(connection.close()) },
-                    { connection, error -> Mono.from(connection.close()) },
+                    { connection, _ -> Mono.from(connection.close()) },
                     { connection -> Mono.from(connection.close()) },
                 ).awaitSingle()
         } catch (e: Exception) {
@@ -169,13 +170,100 @@ class RelationalAggregateRepository<E, S>(
         }
     }
 
-    private fun write(block: () -> Mono<Result>): Mono<Unit> =
+    override suspend fun pollOutbox(limit: Int): Flow<AggregateRepository.OutboxRecord<E>> {
+        try {
+            val claimId =
+                java.util.UUID
+                    .randomUUID()
+                    .toString()
+
+            return Flux
+                .usingWhen(
+                    Mono.from(connectionFactory.create()),
+                    { connection ->
+                        Mono
+                            .from(connection.beginTransaction())
+                            .then(claimRecords(claimId, limit, connection))
+                            .then(Mono.from(connection.commitTransaction()))
+                            .thenMany(extractRecords(claimId, connection))
+                    },
+                    { connection -> Mono.from(connection.close()) },
+                    { connection, _ ->
+                        Mono
+                            .from(connection.rollbackTransaction())
+                            .then(Mono.from(connection.close()))
+                    },
+                    { connection -> Mono.from(connection.close()) },
+                ).asFlow()
+        } catch (ex: Exception) {
+            throw EventSourcingRepositoryException(ex)
+        }
+    }
+
+    private fun extractRecords(
+        claimId: String,
+        connection: Connection,
+    ): Flux<AggregateRepository.OutboxRecord<E>> =
+        Flux
+            .from(
+                connection
+                    .createStatement(
+                        """
+                                    SELECT EVENT_ID, EVENT_DATA
+                                    FROM EVENT_OUTBOX
+                                    WHERE CLAIM_ID = $1
+                                    """,
+                    ).bind(0, claimId)
+                    .execute(),
+            ).flatMap { result ->
+                result.map { row, metadata ->
+                    AggregateRepository.OutboxRecord(
+                        eventId = row.get("EVENT_ID", String::class.java)!!,
+                        event =
+                            eventSerializer.deserialize(
+                                row.get("EVENT_DATA", String::class.java)!!,
+                            ),
+                    )
+                }
+            }
+
+    private fun claimRecords(
+        claimId: String,
+        limit: Int,
+        connection: Connection,
+    ): Mono<Unit> =
+        Mono
+            .from(
+                connection
+                    .createStatement(
+                        """
+                                    UPDATE EVENT_OUTBOX
+                                    SET CLAIM_ID = $1, CLAIMED_AT = CURRENT_TIMESTAMP
+                                    WHERE EVENT_ID IN (
+                                        SELECT EVENT_ID
+                                        FROM EVENT_OUTBOX
+                                        WHERE CLAIM_ID IS NULL
+                                        ORDER BY EVENT_ID
+                                        LIMIT $2
+                                        FOR UPDATE SKIP LOCKED
+                                    )
+                                    """,
+                    ).bind(0, claimId)
+                    .bind(1, limit)
+                    .execute(),
+            ).flatMap { Mono.from(it.rowsUpdated) }
+            .then(Mono.empty())
+
+    private fun write(
+        expectedRows: Long = 1L,
+        block: () -> Mono<Result>,
+    ): Mono<Unit> =
         block()
             .flatMap { Mono.from(it.rowsUpdated) }
             .flatMap { rowsAffected ->
-                if (rowsAffected != 1L) {
+                if (rowsAffected != expectedRows) {
                     Mono.error(
-                        IllegalStateException("Expected 1 row affected in event_journal, but got $rowsAffected"),
+                        IllegalStateException("Expected $expectedRows row/s affected in event_journal, but got $rowsAffected"),
                     )
                 } else {
                     Mono.empty()
@@ -191,13 +279,11 @@ class RelationalAggregateRepository<E, S>(
                 .createStatement(
                     """
                             INSERT INTO EVENT_OUTBOX 
-                            (ENTITY_ID, SEQUENCE_NUMBER, EVENT_DATA, EVENT_ID)
-                            VALUES ($1, $2, $3, $4)
+                            (EVENT_ID, EVENT_DATA)
+                            VALUES ($1, $2)
                         """,
-                ).bind(0, eventRecord.entityId)
-                .bind(1, eventRecord.sequenceNumber)
-                .bind(2, eventSerializer.serialize(eventRecord.event))
-                .bind(3, randomUUID().toString())
+                ).bind(0, "${eventRecord.entityId}|${eventRecord.sequenceNumber}")
+                .bind(1, eventSerializer.serialize(eventRecord.event))
                 .execute(),
         )
 

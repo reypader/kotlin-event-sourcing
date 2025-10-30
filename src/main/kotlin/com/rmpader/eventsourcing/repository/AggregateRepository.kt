@@ -1,4 +1,4 @@
-package com.rmpader.evensourcing
+package com.rmpader.eventsourcing.repository
 
 import kotlinx.coroutines.flow.Flow
 import java.time.OffsetDateTime
@@ -9,6 +9,11 @@ interface AggregateRepository<E, S> {
         val event: E,
         val sequenceNumber: Long,
         val timestamp: OffsetDateTime,
+    )
+
+    data class OutboxRecord<E>(
+        val eventId: String,
+        val event: E,
     )
 
     data class SnapshotRecord<S>(
@@ -27,5 +32,7 @@ interface AggregateRepository<E, S> {
 
     suspend fun storeEvent(eventRecord: EventRecord<E>)
 
-    suspend fun deleteFromOutbox(eventId: String)
+    suspend fun deleteFromOutbox(eventIds: Set<String>)
+
+    suspend fun pollOutbox(limit: Int): Flow<OutboxRecord<E>>
 }

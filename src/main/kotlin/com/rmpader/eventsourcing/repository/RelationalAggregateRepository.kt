@@ -200,6 +200,35 @@ class RelationalAggregateRepository<E, S>(
         }
     }
 
+    override suspend fun cleanupStaleOutboxClaims(staleAfterMillis: Long): Long {
+        try {
+            return Mono
+                .usingWhen(
+                    Mono.from(connectionFactory.create()),
+                    { connection ->
+                        Mono
+                            .from(
+                                connection
+                                    .createStatement(
+                                        """
+                            UPDATE EVENT_OUTBOX
+                            SET CLAIM_ID = NULL, CLAIMED_AT = NULL
+                            WHERE CLAIM_ID IS NOT NULL
+                            AND CLAIMED_AT < DATEADD('MILLISECOND', -$1, CURRENT_TIMESTAMP)
+                            """,
+                                    ).bind(0, staleAfterMillis)
+                                    .execute(),
+                            ).flatMap { Mono.from(it.rowsUpdated) }
+                    },
+                    { connection -> Mono.from(connection.close()) },
+                    { connection, _ -> Mono.from(connection.close()) },
+                    { connection -> Mono.from(connection.close()) },
+                ).awaitSingle()
+        } catch (e: Exception) {
+            throw EventSourcingRepositoryException(e)
+        }
+    }
+
     private fun extractRecords(
         claimId: String,
         connection: Connection,

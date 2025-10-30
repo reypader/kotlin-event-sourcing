@@ -460,4 +460,72 @@ class RelationalAggregateRepositoryTest {
             // Then
             assertEquals(0, outboxRecords.size)
         }
+
+    @Test
+    fun `concurrent pollOutbox should not return duplicate records`() =
+        runTest {
+            val entityId = "test-entity"
+            (1..10).forEach {
+                TestDatabase.insertUnclaimedOutboxDirect("$entityId|$it", "event-$it|$it")
+            }
+
+            // Simulate concurrent polling
+            val r1 = async { repository.pollOutbox(5).toList() }
+            val r2 = async { repository.pollOutbox(5).toList() }
+            val records1 = r1.await()
+            val records2 = r2.await()
+            assertEquals(5, records1.size)
+            assertEquals(5, records2.toList().size)
+
+            // Verify no overlap
+            val eventIds1 = records1.map { it.eventId }.toSet()
+            val eventIds2 = records2.map { it.eventId }.toSet()
+            assertEquals(0, eventIds1.intersect(eventIds2).size)
+        }
+
+    @Test
+    fun `cleanupStaleOutboxClaims should return 0 when no claims exist`() =
+        runTest {
+            TestDatabase.insertUnclaimedOutboxDirect("test|1", "event-1|1")
+
+            val cleaned = repository.cleanupStaleOutboxClaims(1L)
+
+            assertEquals(0L, cleaned)
+        }
+
+    @Test
+    fun `cleanupStaleOutboxClaims should return 0 when all claims are fresh`() =
+        runTest {
+            TestDatabase.insertClaimedOutboxDirect("test|1", "event-1|1")
+
+            val cleaned = repository.cleanupStaleOutboxClaims(60000L) // 1 minute
+
+            assertEquals(0L, cleaned)
+        }
+
+    @Test
+    fun `cleanupStaleOutboxClaims should only update stale claims`() =
+        runTest {
+            // Given
+            val entityId = "test-entity-2"
+            TestDatabase.insertClaimedOutboxDirect("$entityId|5", "event-5|5")
+            TestDatabase.insertClaimedOutboxDirect("$entityId|4", "event-4|4")
+            TestDatabase.insertClaimedOutboxDirect("$entityId|3", "event-3|3", OffsetDateTime.now().minusSeconds(2))
+            TestDatabase.insertClaimedOutboxDirect("$entityId|2", "event-2|2", OffsetDateTime.now().minusSeconds(2))
+            TestDatabase.insertClaimedOutboxDirect("$entityId|1", "event-1|1")
+
+            // When
+            val updatedRows = repository.cleanupStaleOutboxClaims(1000)
+
+            // Then
+            assertEquals(2, updatedRows)
+            TestDatabase.assertEventOutboxCount(5L)
+
+            // Original orphaned outbox data intact
+            TestDatabase.assertEventOutboxContains("$entityId|1", "event-1|1", true)
+            TestDatabase.assertEventOutboxContains("$entityId|2", "event-2|2", false)
+            TestDatabase.assertEventOutboxContains("$entityId|3", "event-3|3", false)
+            TestDatabase.assertEventOutboxContains("$entityId|4", "event-4|4", true)
+            TestDatabase.assertEventOutboxContains("$entityId|5", "event-5|5", true)
+        }
 }

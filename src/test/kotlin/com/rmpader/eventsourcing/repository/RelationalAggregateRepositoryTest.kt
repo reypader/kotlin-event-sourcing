@@ -94,11 +94,8 @@ class RelationalAggregateRepositoryTest {
                 )
                 throw AssertionError("Expected duplicate key exception")
             } catch (e: Exception) {
-                assertTrue(
-                    e.message?.contains("duplicate", ignoreCase = true) == true ||
-                        e.message?.contains("unique", ignoreCase = true) == true ||
-                        e.message?.contains("constraint", ignoreCase = true) == true,
-                )
+                assertTrue(e is EventSourcingRepositoryException)
+                assertTrue(e.cause is R2dbcDataIntegrityViolationException)
             }
 
             // Then
@@ -418,11 +415,9 @@ class RelationalAggregateRepositoryTest {
         runTest {
             // Prepare
             val entityId = "test-entity-2"
-            TestDatabase.insertUnclaimedOutboxDirect("$entityId|5", "event-5|5")
-            TestDatabase.insertUnclaimedOutboxDirect("$entityId|4", "event-4|4")
-            TestDatabase.insertUnclaimedOutboxDirect("$entityId|3", "event-3|3")
-            TestDatabase.insertUnclaimedOutboxDirect("$entityId|2", "event-2|2")
-            TestDatabase.insertUnclaimedOutboxDirect("$entityId|1", "event-1|1")
+            (1..5).forEach {
+                TestDatabase.insertUnclaimedOutboxDirect("$entityId|$it", "event-$it|$it")
+            }
             TestDatabase.lockRecordsThen {
                 // Given
                 // nothing
@@ -447,11 +442,9 @@ class RelationalAggregateRepositoryTest {
         runTest {
             // Given
             val entityId = "test-entity-2"
-            TestDatabase.insertUnclaimedOutboxDirect("$entityId|5", "event-5|5")
-            TestDatabase.insertUnclaimedOutboxDirect("$entityId|4", "event-4|4")
-            TestDatabase.insertUnclaimedOutboxDirect("$entityId|3", "event-3|3")
-            TestDatabase.insertUnclaimedOutboxDirect("$entityId|2", "event-2|2")
-            TestDatabase.insertUnclaimedOutboxDirect("$entityId|1", "event-1|1")
+            (1..5).forEach {
+                TestDatabase.insertUnclaimedOutboxDirect("$entityId|$it", "event-$it|$it")
+            }
             repository.pollOutbox(10).toList().sortedBy { it.eventId }
 
             // When

@@ -5,6 +5,7 @@ dependencies {
     api(project(":core"))
 
     // Kubernetes client
+    implementation(libs.commons.lang)
     implementation(libs.kubernetes)
 
     // Test

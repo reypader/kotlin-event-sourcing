@@ -22,6 +22,8 @@ dependencies {
     // R2DBC
     implementation(libs.r2dbc.pool)
 
+    // Kubernetes
+    implementation(libs.kubernetes)
     // Test
     testImplementation(kotlin("test"))
     testImplementation(kotlin("test-junit5"))

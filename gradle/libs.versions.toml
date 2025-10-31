@@ -7,7 +7,7 @@ r2dbc-pool = "1.0.2.RELEASE"
 r2dbc-h2 = "1.1.0.RELEASE"
 reactor = "3.7.12"
 ktlint = "13.1.0"
-
+kubernetes = "24.0.0"
 [libraries]
 # R2DBC
 r2dbc-pool = { module = "io.r2dbc:r2dbc-pool", version.ref = "r2dbc-pool" }
@@ -20,10 +20,13 @@ reactor-test = { module = "io.projectreactor:reactor-test", version.ref = "react
 # Kotlin
 kotlinx-coroutines-reactor = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-reactor", version.ref = "kotlin-coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlin-coroutines" }
-
 kotlinx-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+
+# Kubernetes
+kubernetes = { module = "io.kubernetes:client-java", version.ref = "kubernetes" }
+
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
-ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint"}
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }

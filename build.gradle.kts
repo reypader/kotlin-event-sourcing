@@ -24,6 +24,10 @@ dependencies {
 
     // Kubernetes
     implementation(libs.kubernetes)
+
+    // AWS CloudMap
+    implementation(libs.cloud.map)
+
     // Test
     testImplementation(kotlin("test"))
     testImplementation(kotlin("test-junit5"))

@@ -8,6 +8,7 @@ r2dbc-h2 = "1.1.0.RELEASE"
 reactor = "3.7.12"
 ktlint = "13.1.0"
 kubernetes = "24.0.0"
+aws-kotlin = "1.5.71"
 [libraries]
 # R2DBC
 r2dbc-pool = { module = "io.r2dbc:r2dbc-pool", version.ref = "r2dbc-pool" }
@@ -25,6 +26,8 @@ kotlinx-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", ve
 # Kubernetes
 kubernetes = { module = "io.kubernetes:client-java", version.ref = "kubernetes" }
 
+# Cloud Map
+cloud-map = { module = "aws.sdk.kotlin:servicediscovery", version.ref = "aws-kotlin" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

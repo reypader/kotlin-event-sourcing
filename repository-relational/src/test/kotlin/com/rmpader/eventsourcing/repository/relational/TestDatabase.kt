@@ -1,4 +1,4 @@
-package com.rmpader.eventsourcing.relational
+package com.rmpader.eventsourcing.repository.relational
 
 import io.r2dbc.spi.ConnectionFactories
 import io.r2dbc.spi.ConnectionFactory

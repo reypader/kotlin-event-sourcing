@@ -1,4 +1,4 @@
-package com.rmpader.eventsourcing
+package com.rmpader.eventsourcing.repository
 
 import kotlinx.coroutines.flow.Flow
 import java.time.OffsetDateTime

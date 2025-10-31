@@ -1,6 +1,6 @@
-package com.rmpader.eventsourcing.relational
+package com.rmpader.eventsourcing.repository.relational
 
-import com.rmpader.eventsourcing.EventSerializer
+import com.rmpader.eventsourcing.Serializer
 
 data class TestEvent(
     val name: String,
@@ -12,8 +12,8 @@ data class TestState(
     val count: Int,
 )
 
-class TestEventSerializer : EventSerializer<TestEvent> {
-    override fun serialize(event: TestEvent): String = "${event.name}|${event.value}"
+class TestSerializer : Serializer<TestEvent> {
+    override fun serialize(data: TestEvent): String = "${data.name}|${data.value}"
 
     override fun deserialize(data: String): TestEvent {
         val parts = data.split("|")
@@ -21,8 +21,8 @@ class TestEventSerializer : EventSerializer<TestEvent> {
     }
 }
 
-class TestStateSerializer : EventSerializer<TestState> {
-    override fun serialize(event: TestState): String = "${event.status}|${event.count}"
+class TestStateSerializer : Serializer<TestState> {
+    override fun serialize(data: TestState): String = "${data.status}|${data.count}"
 
     override fun deserialize(data: String): TestState {
         val parts = data.split("|")

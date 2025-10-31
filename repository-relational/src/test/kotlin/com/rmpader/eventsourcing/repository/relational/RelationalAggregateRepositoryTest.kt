@@ -1,7 +1,7 @@
-package com.rmpader.eventsourcing.relational
+package com.rmpader.eventsourcing.repository.relational
 
-import com.rmpader.eventsourcing.AggregateRepository
-import com.rmpader.eventsourcing.EventSourcingRepositoryException
+import com.rmpader.eventsourcing.repository.AggregateRepository
+import com.rmpader.eventsourcing.repository.EventSourcingRepositoryException
 import io.r2dbc.spi.R2dbcDataIntegrityViolationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.toList
@@ -25,7 +25,7 @@ class RelationalAggregateRepositoryTest {
         repository =
             RelationalAggregateRepository(
                 TestDatabase.createR2dbcConnectionFactory(),
-                TestEventSerializer(),
+                TestSerializer(),
                 TestStateSerializer(),
             )
     }

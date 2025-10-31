@@ -1,4 +1,4 @@
-package com.rmpader.eventsourcing
+package com.rmpader.eventsourcing.repository
 
 class EventSourcingRepositoryException(
     cause: Throwable? = null,

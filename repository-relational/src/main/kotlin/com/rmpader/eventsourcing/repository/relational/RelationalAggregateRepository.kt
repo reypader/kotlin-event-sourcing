@@ -1,8 +1,8 @@
-package com.rmpader.eventsourcing.relational
+package com.rmpader.eventsourcing.repository.relational
 
-import com.rmpader.eventsourcing.AggregateRepository
-import com.rmpader.eventsourcing.EventSerializer
-import com.rmpader.eventsourcing.EventSourcingRepositoryException
+import com.rmpader.eventsourcing.Serializer
+import com.rmpader.eventsourcing.repository.AggregateRepository
+import com.rmpader.eventsourcing.repository.EventSourcingRepositoryException
 import io.r2dbc.spi.Connection
 import io.r2dbc.spi.ConnectionFactory
 import io.r2dbc.spi.Result
@@ -18,8 +18,8 @@ import java.util.UUID
 
 class RelationalAggregateRepository<E, S>(
     val connectionFactory: ConnectionFactory,
-    val eventSerializer: EventSerializer<E>,
-    val stateSerializer: EventSerializer<S>,
+    val serializer: Serializer<E>,
+    val stateSerializer: Serializer<S>,
 ) : AggregateRepository<E, S> {
     override fun loadEvents(
         entityId: String,
@@ -48,7 +48,7 @@ class RelationalAggregateRepository<E, S>(
                                     AggregateRepository.EventRecord(
                                         entityId = row.get("ENTITY_ID", String::class.java)!!,
                                         event =
-                                            eventSerializer.deserialize(
+                                            serializer.deserialize(
                                                 row.get("EVENT_DATA", String::class.java)!!,
                                             ),
                                         sequenceNumber = row.get("SEQUENCE_NUMBER", Number::class.java)!!.toLong(),
@@ -253,7 +253,7 @@ class RelationalAggregateRepository<E, S>(
                     AggregateRepository.OutboxRecord(
                         eventId = row.get("EVENT_ID", String::class.java)!!,
                         event =
-                            eventSerializer.deserialize(
+                            serializer.deserialize(
                                 row.get("EVENT_DATA", String::class.java)!!,
                             ),
                     )
@@ -316,7 +316,7 @@ class RelationalAggregateRepository<E, S>(
                             VALUES ($1, $2)
                         """,
                 ).bind(0, "${eventRecord.entityId}|${eventRecord.sequenceNumber}")
-                .bind(1, eventSerializer.serialize(eventRecord.event))
+                .bind(1, serializer.serialize(eventRecord.event))
                 .execute(),
         )
 
@@ -334,7 +334,7 @@ class RelationalAggregateRepository<E, S>(
                         """,
                 ).bind(0, eventRecord.entityId)
                 .bind(1, eventRecord.sequenceNumber)
-                .bind(2, eventSerializer.serialize(eventRecord.event))
+                .bind(2, serializer.serialize(eventRecord.event))
                 .execute(),
         )
 }

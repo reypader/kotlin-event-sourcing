@@ -3,7 +3,8 @@ package com.rmpader.eventsourcing.aws
 import aws.sdk.kotlin.services.servicediscovery.ServiceDiscoveryClient
 import aws.sdk.kotlin.services.servicediscovery.model.DiscoverInstancesRequest
 import aws.sdk.kotlin.services.servicediscovery.model.HealthStatusFilter
-import com.rmpader.eventsourcing.AggregateCoordinator
+import com.rmpader.eventsourcing.coordination.AggregateCoordinator
+import com.rmpader.eventsourcing.coordination.AggregateCoordinator.AggregateLocation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -53,19 +54,18 @@ class CloudMapAggregateCoordinator private constructor(
         }
     }
 
-    override fun getAggregateOwnner(aggregateId: String): String? {
+    override fun locateAggregate(aggregateId: String): AggregateLocation {
         val members = clusterMembers.value
-        if (members.isEmpty()) return null
 
         val targetNode =
             members.maxByOrNull { member ->
                 hash("$aggregateId:$member")
             }
 
-        return if (targetNode == nodeId) {
-            null
+        return if (targetNode == null || targetNode == nodeId) {
+            AggregateLocation.Local
         } else {
-            targetNode
+            AggregateLocation.Remote(targetNode)
         }
     }
 

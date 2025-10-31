@@ -1,6 +1,7 @@
-package com.rmpader.eventsourcing.kubernetes
+package com.rmpader.eventsourcing.coordination.kubernetes
 
-import com.rmpader.eventsourcing.AggregateCoordinator
+import com.rmpader.eventsourcing.coordination.AggregateCoordinator
+import com.rmpader.eventsourcing.coordination.AggregateCoordinator.AggregateLocation
 import io.kubernetes.client.informer.ResourceEventHandler
 import io.kubernetes.client.informer.SharedIndexInformer
 import io.kubernetes.client.informer.SharedInformerFactory
@@ -75,19 +76,18 @@ class KubernetesAggregateCoordinator private constructor(
         informerFactory.stopAllRegisteredInformers()
     }
 
-    override fun getAggregateOwnner(aggregateId: String): String? {
+    override fun locateAggregate(aggregateId: String): AggregateLocation {
         val members = clusterMembers.value
-        if (members.isEmpty()) return null
 
         val targetNode =
             members.maxByOrNull { member ->
                 hash("$aggregateId:$member")
             }
 
-        return if (targetNode == nodeId) {
-            null // This node handles it
+        return if (targetNode == null || targetNode == nodeId) {
+            AggregateLocation.Local
         } else {
-            targetNode // Forward to this node
+            AggregateLocation.Remote(targetNode)
         }
     }
 

@@ -1,8 +1,8 @@
 description = "AWS Cloud Map-based aggregate coordination"
 
 dependencies {
-    // SPI dependency
-    api(project(":spi"))
+    // Core dependency
+    api(project(":core"))
 
     // AWS Cloud Map
     implementation(libs.cloud.map)

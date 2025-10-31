@@ -5,7 +5,7 @@ plugins {
 rootProject.name = "kotlin-event-sourcing"
 
 include(
-    "spi",
+    "core",
     "repository-relational",
     "coordination-kubernetes",
     "coordination-aws"

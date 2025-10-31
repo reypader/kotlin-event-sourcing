@@ -1,8 +1,8 @@
 description = "Kubernetes-based aggregate coordination using Informers"
 
 dependencies {
-    // SPI dependency
-    api(project(":spi"))
+    // Core dependency
+    api(project(":core"))
 
     // Kubernetes client
     implementation(libs.kubernetes)

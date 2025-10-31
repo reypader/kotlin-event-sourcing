@@ -1,8 +1,8 @@
 description = "Relational database implementation using R2DBC"
 
 dependencies {
-    // SPI dependency
-    api(project(":spi"))
+    // Core dependency
+    api(project(":core"))
 
     // R2DBC
     implementation(libs.r2dbc.pool)

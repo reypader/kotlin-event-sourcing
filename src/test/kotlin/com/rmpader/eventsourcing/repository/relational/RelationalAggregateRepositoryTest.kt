@@ -1,5 +1,12 @@
-package com.rmpader.eventsourcing.repository
+package com.rmpader.eventsourcing.repository.relational
 
+import com.rmpader.eventsourcing.repository.AggregateRepository
+import com.rmpader.eventsourcing.repository.EventSourcingRepositoryException
+import com.rmpader.eventsourcing.repository.relational.RelationalAggregateRepository
+import com.rmpader.eventsourcing.repository.TestEvent
+import com.rmpader.eventsourcing.repository.TestEventSerializer
+import com.rmpader.eventsourcing.repository.TestState
+import com.rmpader.eventsourcing.repository.TestStateSerializer
 import io.r2dbc.spi.R2dbcDataIntegrityViolationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.toList

@@ -1,6 +1,8 @@
-package com.rmpader.eventsourcing.repository
+package com.rmpader.eventsourcing.repository.relational
 
 import com.rmpader.eventsourcing.EventSerializer
+import com.rmpader.eventsourcing.repository.AggregateRepository
+import com.rmpader.eventsourcing.repository.EventSourcingRepositoryException
 import io.r2dbc.spi.Connection
 import io.r2dbc.spi.ConnectionFactory
 import io.r2dbc.spi.Result
@@ -10,7 +12,9 @@ import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
+import java.time.LocalDateTime
 import java.time.ZoneOffset
+import java.util.UUID
 
 class RelationalAggregateRepository<E, S>(
     val connectionFactory: ConnectionFactory,
@@ -50,7 +54,7 @@ class RelationalAggregateRepository<E, S>(
                                         sequenceNumber = row.get("SEQUENCE_NUMBER", Number::class.java)!!.toLong(),
                                         timestamp =
                                             row
-                                                .get("TIMESTAMP", java.time.LocalDateTime::class.java)!!
+                                                .get("TIMESTAMP", LocalDateTime::class.java)!!
                                                 .atOffset(ZoneOffset.UTC),
                                     )
                                 }
@@ -95,7 +99,7 @@ class RelationalAggregateRepository<E, S>(
                                             sequenceNumber = row.get("SEQUENCE_NUMBER", Number::class.java)!!.toLong(),
                                             timestamp =
                                                 row
-                                                    .get("TIMESTAMP", java.time.LocalDateTime::class.java)!!
+                                                    .get("TIMESTAMP", LocalDateTime::class.java)!!
                                                     .atOffset(ZoneOffset.UTC),
                                         )
                                     },
@@ -173,7 +177,7 @@ class RelationalAggregateRepository<E, S>(
     override suspend fun pollOutbox(limit: Int): Flow<AggregateRepository.OutboxRecord<E>> {
         try {
             val claimId =
-                java.util.UUID
+                UUID
                     .randomUUID()
                     .toString()
 

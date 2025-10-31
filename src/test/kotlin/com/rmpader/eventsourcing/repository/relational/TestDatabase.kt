@@ -1,4 +1,4 @@
-package com.rmpader.eventsourcing.repository
+package com.rmpader.eventsourcing.repository.relational
 
 import io.r2dbc.spi.ConnectionFactories
 import io.r2dbc.spi.ConnectionFactory
@@ -7,7 +7,7 @@ import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.Timestamp
 import java.time.OffsetDateTime
-import java.util.*
+import java.util.UUID
 
 object TestDatabase {
     fun createR2dbcConnectionFactory(): ConnectionFactory =

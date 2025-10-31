@@ -1,44 +1,29 @@
 plugins {
-    alias(libs.plugins.kotlin.jvm)
-    alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.ktlint)
+    alias(libs.plugins.kotlin.jvm) apply false
+    alias(libs.plugins.ktlint) apply false
 }
 
 group = "com.rmpader"
 version = "1.0-SNAPSHOT"
-description = "kotlin-event-sourcing"
 
-repositories {
-    mavenCentral()
+allprojects {
+    repositories {
+        mavenCentral()
+    }
 }
 
-dependencies {
-    implementation(libs.kotlinx.json)
+subprojects {
+    apply(plugin = "org.jetbrains.kotlin.jvm")
+    apply(plugin = "org.jlleitschuh.gradle.ktlint")
 
-    // Reactor
-    implementation(libs.kotlinx.coroutines.reactor)
-    implementation(libs.reactor.kotlin.extensions)
+    group = rootProject.group
+    version = rootProject.version
 
-    // R2DBC
-    implementation(libs.r2dbc.pool)
+    tasks.withType<Test> {
+        useJUnitPlatform()
+    }
 
-    // Kubernetes
-    implementation(libs.kubernetes)
-
-    // AWS CloudMap
-    implementation(libs.cloud.map)
-
-    // Test
-    testImplementation(kotlin("test"))
-    testImplementation(kotlin("test-junit5"))
-    testImplementation(libs.r2dbc.h2)
-    testImplementation(libs.reactor.test)
-    testImplementation(libs.kotlinx.coroutines.test)
-}
-
-tasks.test {
-    useJUnitPlatform()
-}
-kotlin {
-    jvmToolchain(21)
+    configure<org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension> {
+        jvmToolchain(21)
+    }
 }

@@ -9,7 +9,6 @@ import io.kubernetes.client.openapi.ApiClient
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.openapi.models.V1Pod
 import io.kubernetes.client.openapi.models.V1PodList
-import io.kubernetes.client.util.Config
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -147,28 +146,12 @@ class KubernetesAggregateCoordinator private constructor(
     /**
      * Builder for KubernetesAggregateCoordinator
      */
-    class Builder {
-        private var labelSelector: String? = null
-        private var nodeId: String? = null
-        private var namespace: String? = null
-        private var client: ApiClient? = null
-
-        /**
-         * Set the Kubernetes label selector for discovering pods (required)
-         * Example: "app=event-sourcing"
-         */
-        fun labelSelector(selector: String) =
-            apply {
-                this.labelSelector = selector
-            }
-
-        /**
-         * Set this node's ID. Defaults to POD_NAME environment variable
-         */
-        fun nodeId(id: String) =
-            apply {
-                this.nodeId = id
-            }
+    class Builder(
+        private val nodeId: String,
+        private val labelSelector: String,
+        private val client: ApiClient,
+    ) {
+        private var namespace: String = "default"
 
         /**
          * Set the Kubernetes namespace. Defaults to NAMESPACE env var or "default"
@@ -178,40 +161,14 @@ class KubernetesAggregateCoordinator private constructor(
                 this.namespace = ns
             }
 
-        /**
-         * Set a custom ApiClient (useful for testing)
-         */
-        fun client(apiClient: ApiClient) =
-            apply {
-                this.client = apiClient
-            }
-
-        /**
-         * Build the KubernetesAggregateCoordinator
-         */
         fun build(): KubernetesAggregateCoordinator {
-            val resolvedLabelSelector =
-                labelSelector
-                    ?: throw IllegalStateException("labelSelector is required")
-
-            val resolvedNodeId =
-                nodeId
-                    ?: System.getenv("POD_NAME")
-                    ?: throw IllegalStateException("nodeId must be set or POD_NAME env var must exist")
-
-            val resolvedNamespace =
-                namespace
-                    ?: System.getenv("NAMESPACE")
-                    ?: "default"
-
-            val resolvedClient = client ?: Config.defaultClient()
-            val api = CoreV1Api(resolvedClient)
-            val informerFactory = SharedInformerFactory(resolvedClient)
+            val api = CoreV1Api(client)
+            val informerFactory = SharedInformerFactory(client)
 
             return KubernetesAggregateCoordinator(
-                labelSelector = resolvedLabelSelector,
-                nodeId = resolvedNodeId,
-                namespace = resolvedNamespace,
+                labelSelector = labelSelector,
+                nodeId = nodeId,
+                namespace = namespace,
                 api = api,
                 informerFactory = informerFactory,
             )
@@ -221,9 +178,10 @@ class KubernetesAggregateCoordinator private constructor(
     companion object {
         private val logger: Logger = LoggerFactory.getLogger(KubernetesAggregateCoordinator::class.java)
 
-        /**
-         * Create a new builder
-         */
-        fun builder() = Builder()
+        fun builder(
+            nodeId: String,
+            labelSelector: String,
+            kubernetesClient: ApiClient,
+        ) = Builder(nodeId, labelSelector, kubernetesClient)
     }
 }

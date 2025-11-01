@@ -142,7 +142,7 @@ class DefaultAggregateManagerTest {
                 repository.storeEvent(
                     match {
                         it.entityId == "order-1" &&
-                            it.sequenceNumber == 8L && // After sequence 7
+                            it.sequenceNumber == 8L &&
                             it.event == TestEvent.OrderCreated(125, 25, 100)
                     },
                 )

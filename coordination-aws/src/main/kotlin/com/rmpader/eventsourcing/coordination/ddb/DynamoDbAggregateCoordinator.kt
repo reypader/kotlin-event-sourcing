@@ -170,18 +170,15 @@ class DynamoDbAggregateCoordinator private constructor(
         }
     }
 
-    class Builder {
-        private var tableName: String? = null
-        private var nodeId: String? = null
-        private var dynamoDbClient: DynamoDbClient? = null
+    class Builder(
+        private val nodeId: String,
+        private val dynamoDbClient: DynamoDbClient,
+    ) {
+        private var tableName: String = "cluster_membership"
         private var heartbeatInterval: Duration = 5.seconds
         private var ttl: Duration = 6.seconds
 
         fun tableName(name: String) = apply { this.tableName = name }
-
-        fun nodeId(id: String) = apply { this.nodeId = id }
-
-        fun dynamoDbClient(client: DynamoDbClient) = apply { this.dynamoDbClient = client }
 
         fun heartbeatInterval(interval: Duration) = apply { this.heartbeatInterval = interval }
 
@@ -189,9 +186,9 @@ class DynamoDbAggregateCoordinator private constructor(
 
         fun build() =
             DynamoDbAggregateCoordinator(
-                tableName = requireNotNull(tableName) { "tableName required" },
-                nodeId = requireNotNull(nodeId) { "nodeId required" },
-                dynamoDbClient = dynamoDbClient ?: DynamoDbClient { },
+                tableName = tableName,
+                nodeId = nodeId,
+                dynamoDbClient = dynamoDbClient,
                 heartbeatInterval = heartbeatInterval,
                 ttl = ttl,
             )
@@ -200,6 +197,9 @@ class DynamoDbAggregateCoordinator private constructor(
     companion object {
         private val logger: Logger = LoggerFactory.getLogger(DynamoDbAggregateCoordinator::class.java)
 
-        fun builder() = Builder()
+        fun builder(
+            nodeId: String,
+            dynamoDbClient: DynamoDbClient,
+        ) = Builder(nodeId, dynamoDbClient)
     }
 }

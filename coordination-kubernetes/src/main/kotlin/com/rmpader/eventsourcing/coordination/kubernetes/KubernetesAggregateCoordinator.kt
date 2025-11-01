@@ -11,6 +11,8 @@ import io.kubernetes.client.openapi.models.V1Pod
 import io.kubernetes.client.openapi.models.V1PodList
 import io.kubernetes.client.util.Config
 import kotlinx.coroutines.flow.MutableStateFlow
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 
 /**
@@ -27,10 +29,18 @@ class KubernetesAggregateCoordinator private constructor(
     private lateinit var podInformer: SharedIndexInformer<V1Pod>
 
     override fun start() {
-        // Create informer for pods with label selector
+        logger.info("Starting KubernetesAggregateCoordinator...")
         podInformer =
             informerFactory.sharedIndexInformerFor(
                 { params ->
+                    logger.debug(
+                        "Creating informer for pods with properties: " +
+                            "resourceVersion=${params.resourceVersion}, " +
+                            "timeoutSeconds=${params.timeoutSeconds}, " +
+                            "watch=${params.watch}, " +
+                            "namespace=$namespace, " +
+                            "labelSelector=$labelSelector",
+                    )
                     api
                         .listNamespacedPod(namespace)
                         .labelSelector(labelSelector)
@@ -42,7 +52,7 @@ class KubernetesAggregateCoordinator private constructor(
                 V1Pod::class.java,
                 V1PodList::class.java,
             )
-        // Add event handler for pod changes
+        logger.info("Registering Event Handler for pod changes...")
         podInformer.addEventHandler(
             object : ResourceEventHandler<V1Pod> {
                 override fun onAdd(pod: V1Pod) {
@@ -65,19 +75,21 @@ class KubernetesAggregateCoordinator private constructor(
             },
         )
 
-        // Start all informers
+        logger.info("Starting Informers...")
         informerFactory.startAllRegisteredInformers()
 
-        // Initial update
+        logger.info("Initial cluster membership update...")
         updateClusterMembers()
     }
 
     override fun stop() {
+        logger.info("Stopping Informers...")
         informerFactory.stopAllRegisteredInformers()
     }
 
     override fun locateAggregate(aggregateId: String): AggregateLocation {
         val members = clusterMembers.value
+        logger.info("Locating aggregate $aggregateId...")
 
         val targetNode =
             members.maxByOrNull { member ->
@@ -85,16 +97,19 @@ class KubernetesAggregateCoordinator private constructor(
             }
 
         return if (targetNode == null || targetNode == nodeId) {
+            logger.info("Aggregate is local")
             AggregateLocation.Local
         } else {
+            logger.info("Aggregate is located remotely: $targetNode")
             AggregateLocation.Remote(targetNode)
         }
     }
 
     private fun updateClusterMembers() {
         try {
-            // Use informer's indexer (local cache) instead of API call
+            logger.info("Fetching cluster membership...")
             val pods = podInformer.indexer.list()
+            logger.debug("Found ${pods.size} members: ${pods.joinToString(", ") { it.metadata?.name ?: "" }}")
 
             val readyPods =
                 pods
@@ -103,14 +118,16 @@ class KubernetesAggregateCoordinator private constructor(
                             pod.status?.conditions?.any {
                                 it.type == "Ready" && it.status == "True"
                             } == true
-                    }.mapNotNull { it.metadata?.name }
-                    .toSet()
+                    }.mapNotNull {
+                        logger.debug("Pod ${it.metadata?.name} is ready")
+                        it.metadata?.name
+                    }.toSet()
 
             clusterMembers.value = readyPods
 
-            println("Updated cluster members: $readyPods")
+            logger.info("Updated cluster members: $readyPods")
         } catch (e: Exception) {
-            println("Error updating cluster members: ${e.message}")
+            logger.error("Error updating cluster members: ${e.message}", e)
         }
     }
 
@@ -197,6 +214,8 @@ class KubernetesAggregateCoordinator private constructor(
     }
 
     companion object {
+        private val logger: Logger = LoggerFactory.getLogger(KubernetesAggregateCoordinator::class.java)
+
         /**
          * Create a new builder
          */

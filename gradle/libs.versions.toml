@@ -11,6 +11,7 @@ kubernetes = "24.0.0"
 aws-kotlin = "1.5.71"
 mockk = "1.14.6"
 commons-lang3 = "3.19.0"
+slf4j = "2.0.17"
 
 [libraries]
 # R2DBC
@@ -37,6 +38,9 @@ mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
 
 # Commons Lang
 commons-lang = { module = "org.apache.commons:commons-lang3", version.ref = "commons-lang3" }
+
+# SLF4J
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

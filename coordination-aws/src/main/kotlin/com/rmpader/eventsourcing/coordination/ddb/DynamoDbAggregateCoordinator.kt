@@ -20,6 +20,8 @@ import kotlinx.coroutines.runBlocking
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
+import java.time.OffsetDateTime
+import java.time.ZoneOffset.UTC
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -144,19 +146,29 @@ class DynamoDbAggregateCoordinator private constructor(
 
     private suspend fun updateMembership() {
         logger.info("Fetching cluster membership...")
+        val now = OffsetDateTime.now(UTC).toInstant().epochSecond
+        logger.debug("Filtering ttl against: $now")
         val response =
             dynamoDbClient.scan(
                 ScanRequest {
                     tableName = this@DynamoDbAggregateCoordinator.tableName
+                    filterExpression = "#ttl > :now"
+                    expressionAttributeNames = mapOf("#ttl" to "ttl")
+                    expressionAttributeValues =
+                        mapOf(
+                            ":now" to AttributeValue.N(now.toString()),
+                        )
                 },
             )
 
         val activeNodes =
             response.items?.mapNotNull { item ->
-                item["nodeId"]?.asS()
+                item["nodeId"]?.asS()?.also { nodeId ->
+                    logger.debug("Node $nodeId is active")
+                }
             } ?: emptyList()
 
-        logger.debug("Found ${activeNodes.size} members: ${activeNodes.joinToString(", ")}")
+        logger.debug("Found ${activeNodes.size} active members: ${activeNodes.joinToString(", ")}")
         clusterMembers.value = activeNodes.sorted()
 
         logger.debug("Updated cluster members: $activeNodes")

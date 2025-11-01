@@ -56,7 +56,9 @@ class KubernetesAggregateCoordinator private constructor(
         podInformer.addEventHandler(
             object : ResourceEventHandler<V1Pod> {
                 override fun onAdd(pod: V1Pod) {
-                    updateClusterMembers()
+                    if (isReady(pod)) {
+                        updateClusterMembers()
+                    }
                 }
 
                 override fun onUpdate(
@@ -82,6 +84,12 @@ class KubernetesAggregateCoordinator private constructor(
         updateClusterMembers()
     }
 
+    private fun isReady(pod: V1Pod): Boolean =
+        pod.status?.phase == "Running" &&
+            pod.status?.conditions?.any {
+                it.type == "Ready" && it.status == "True"
+            } == true
+
     override fun stop() {
         logger.info("Stopping Informers...")
         informerFactory.stopAllRegisteredInformers()
@@ -89,7 +97,7 @@ class KubernetesAggregateCoordinator private constructor(
 
     override fun locateAggregate(aggregateId: String): AggregateLocation {
         val members = clusterMembers.value
-        logger.info("Locating aggregate $aggregateId...")
+        logger.info("Locating aggregate $aggregateId amongst ${members.size} members...")
 
         val targetNode =
             members.maxByOrNull { member ->
@@ -113,11 +121,8 @@ class KubernetesAggregateCoordinator private constructor(
 
             val readyPods =
                 pods
-                    .filter { pod ->
-                        pod.status?.phase == "Running" &&
-                            pod.status?.conditions?.any {
-                                it.type == "Ready" && it.status == "True"
-                            } == true
+                    .filter {
+                        isReady(it)
                     }.mapNotNull {
                         logger.debug("Pod ${it.metadata?.name} is ready")
                         it.metadata?.name

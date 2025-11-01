@@ -20,6 +20,8 @@ import kotlinx.coroutines.runBlocking
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * DynamoDB-based membership with TTL heartbeats.
@@ -28,8 +30,8 @@ class DynamoDbAggregateCoordinator private constructor(
     private val tableName: String,
     private val nodeId: String,
     private val dynamoDbClient: DynamoDbClient,
-    private val heartbeatIntervalMs: Long = 5_000,
-    private val ttlSeconds: Long = 6,
+    private val heartbeatInterval: Duration,
+    private val ttl: Duration,
 ) : AggregateCoordinator {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var heartbeatJob: Job? = null
@@ -41,7 +43,7 @@ class DynamoDbAggregateCoordinator private constructor(
         logger.info("Starting DynamoDbAggregateCoordinator...")
         logger.debug(
             "Configuration: tableName=$tableName, nodeId=$nodeId, " +
-                "heartbeatInterval=${heartbeatIntervalMs}ms, ttl=${ttlSeconds}s",
+                "heartbeatInterval=$heartbeatInterval, ttl=$ttl",
         )
 
         logger.info("Starting heartbeat job...")
@@ -50,7 +52,7 @@ class DynamoDbAggregateCoordinator private constructor(
                 while (isActive) {
                     try {
                         sendHeartbeat()
-                        delay(heartbeatIntervalMs)
+                        delay(heartbeatInterval)
                     } catch (e: Exception) {
                         logger.error("Error sending heartbeat: ${e.message}", e)
                         delay(1000)
@@ -64,7 +66,7 @@ class DynamoDbAggregateCoordinator private constructor(
                 while (isActive) {
                     try {
                         updateMembership()
-                        delay(heartbeatIntervalMs)
+                        delay(heartbeatInterval)
                     } catch (e: Exception) {
                         logger.error("Error updating membership: ${e.message}", e)
                         delay(1000)
@@ -118,13 +120,13 @@ class DynamoDbAggregateCoordinator private constructor(
             AggregateLocation.Local
         } else {
             logger.debug("Aggregate $aggregateId is located remotely: $targetNode")
-            AggregateLocation.Remote(targetNode ?: nodeId)
+            AggregateLocation.Remote(targetNode)
         }
     }
 
     private suspend fun sendHeartbeat() {
         val now = System.currentTimeMillis() / 1000
-        val expiresAt = now + ttlSeconds
+        val expiresAt = now + ttl.inWholeSeconds
 
         logger.debug("Sending heartbeat for node $nodeId (ttl: $expiresAt)")
         dynamoDbClient.putItem(
@@ -172,8 +174,8 @@ class DynamoDbAggregateCoordinator private constructor(
         private var tableName: String? = null
         private var nodeId: String? = null
         private var dynamoDbClient: DynamoDbClient? = null
-        private var heartbeatIntervalMs: Long = 5_000
-        private var ttlSeconds: Long = 15
+        private var heartbeatInterval: Duration = 5.seconds
+        private var ttl: Duration = 6.seconds
 
         fun tableName(name: String) = apply { this.tableName = name }
 
@@ -181,17 +183,17 @@ class DynamoDbAggregateCoordinator private constructor(
 
         fun dynamoDbClient(client: DynamoDbClient) = apply { this.dynamoDbClient = client }
 
-        fun heartbeatIntervalMs(ms: Long) = apply { this.heartbeatIntervalMs = ms }
+        fun heartbeatInterval(interval: Duration) = apply { this.heartbeatInterval = interval }
 
-        fun ttlSeconds(seconds: Long) = apply { this.ttlSeconds = seconds }
+        fun ttl(ttl: Duration) = apply { this.ttl = ttl }
 
         fun build() =
             DynamoDbAggregateCoordinator(
                 tableName = requireNotNull(tableName) { "tableName required" },
                 nodeId = requireNotNull(nodeId) { "nodeId required" },
                 dynamoDbClient = dynamoDbClient ?: DynamoDbClient { },
-                heartbeatIntervalMs = heartbeatIntervalMs,
-                ttlSeconds = ttlSeconds,
+                heartbeatInterval = heartbeatInterval,
+                ttl = ttl,
             )
     }
 

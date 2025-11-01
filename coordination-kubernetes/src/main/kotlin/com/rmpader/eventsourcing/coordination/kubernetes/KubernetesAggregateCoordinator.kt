@@ -105,10 +105,10 @@ class KubernetesAggregateCoordinator private constructor(
             }
 
         return if (targetNode == null || targetNode == nodeId) {
-            logger.info("Aggregate is local")
+            logger.debug("Aggregate $aggregateId is local")
             AggregateLocation.Local
         } else {
-            logger.info("Aggregate is located remotely: $targetNode")
+            logger.debug("Aggregate $aggregateId is located remotely: $targetNode")
             AggregateLocation.Remote(targetNode)
         }
     }
@@ -130,7 +130,7 @@ class KubernetesAggregateCoordinator private constructor(
 
             clusterMembers.value = readyPods
 
-            logger.info("Updated cluster members: $readyPods")
+            logger.debug("Updated cluster members: $readyPods")
         } catch (e: Exception) {
             logger.error("Error updating cluster members: ${e.message}", e)
         }

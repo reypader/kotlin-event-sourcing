@@ -30,8 +30,8 @@ kotlinx-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", ve
 # Kubernetes
 kubernetes = { module = "io.kubernetes:client-java", version.ref = "kubernetes" }
 
-# Cloud Map
-cloud-map = { module = "aws.sdk.kotlin:servicediscovery", version.ref = "aws-kotlin" }
+# DynamoDB
+aws-dynamodb = { module = "aws.sdk.kotlin:dynamodb", version.ref = "aws-kotlin" }
 
 # MockK
 mockk = { module = "io.mockk:mockk", version.ref = "mockk" }

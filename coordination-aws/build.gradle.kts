@@ -5,7 +5,7 @@ dependencies {
     api(project(":core"))
 
     // AWS Cloud Map
-    implementation(libs.cloud.map)
+    implementation(libs.aws.dynamodb)
 
     // SLF4J
     implementation(libs.slf4j.api)

@@ -20,55 +20,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertSame
 
-class DefaultAggregateManagerTest {
-    // Test domain model
-    sealed interface TestCommand {
-        data class CreateOrder(
-            val amount: Int,
-        ) : TestCommand
-
-        data class InvalidCommand(
-            val reason: String,
-        ) : TestCommand
-    }
-
-    sealed interface TestEvent {
-        data class OrderCreated(
-            val finalAmount: Int,
-            val originalAmount: Int,
-            val additionalAmount: Int,
-        ) : TestEvent
-    }
-
-    data class TestState(
-        val orderId: String,
-        val amount: Int = 0,
-        val created: Boolean = false,
-    ) : AggregateEntity<TestCommand, TestEvent, TestState> {
-        override fun handleCommand(command: TestCommand): TestEvent =
-            when (command) {
-                is TestCommand.CreateOrder -> TestEvent.OrderCreated(amount + command.amount, amount, command.amount)
-                is TestCommand.InvalidCommand ->
-                    throw CommandRejectionException(
-                        reason = command.reason,
-                        errorCode = "INVALID_COMMAND",
-                    )
-            }
-
-        override fun applyEvent(event: TestEvent): TestState =
-            when (event) {
-                is TestEvent.OrderCreated -> copy(amount = event.finalAmount, created = true)
-            }
-
-        companion object {
-            fun empty(id: String) = TestState(id)
-        }
-    }
-
+class DefaultAggregateManagerTest : AggregateManagerBaseClass() {
     private val repository = mockk<AggregateRepository<TestEvent, TestState>>()
 
     private val manager =
-        object : DefaultAggregateManager<TestCommand, TestEvent, TestState>(
+        object : DefaultAggregateManager<AggregateManagerBaseClass.TestCommand, TestEvent, TestState>(
             repository = repository,
         ) {
             override fun initializeAggregate(entityId: String) = TestState.empty(entityId)
@@ -88,7 +44,7 @@ class DefaultAggregateManagerTest {
             coEvery { repository.storeEvent(any()) } just Runs
 
             // When: Execute command
-            manager.acceptCommand("order-1", TestCommand.CreateOrder(100))
+            val result = manager.acceptCommand("order-1", "cmd-1", TestCommand.CreateOrder(100))
 
             // Then: Event stored with correct sequence
             coVerify(exactly = 1) {
@@ -96,10 +52,12 @@ class DefaultAggregateManagerTest {
                     match {
                         it.entityId == "order-1" &&
                             it.sequenceNumber == 1L &&
-                            it.event == TestEvent.OrderCreated(100, 0, 100)
+                            it.event == TestEvent.OrderCreated(100, 0, 100) &&
+                            it.originCommandId == "cmd-1"
                     },
                 )
             }
+            assertEquals(TestState("order-1", amount = 100), result)
         }
 
     @Test
@@ -109,7 +67,7 @@ class DefaultAggregateManagerTest {
             val snapshot =
                 AggregateRepository.SnapshotRecord(
                     entityId = "order-1",
-                    state = TestState("order-1", amount = 50, created = true),
+                    state = TestState("order-1", amount = 50),
                     sequenceNumber = 5,
                     timestamp = OffsetDateTime.now(),
                 )
@@ -123,19 +81,21 @@ class DefaultAggregateManagerTest {
                         event = TestEvent.OrderCreated(25, 50, -25),
                         sequenceNumber = 6,
                         timestamp = OffsetDateTime.now(),
+                        "cmd-1",
                     ),
                     AggregateRepository.EventRecord(
                         entityId = "order-1",
                         event = TestEvent.OrderCreated(25, 25, 0),
                         sequenceNumber = 7,
                         timestamp = OffsetDateTime.now(),
+                        "cmd-2",
                     ),
                 )
             coEvery { repository.loadEvents("order-1", 6) } returns events
             coEvery { repository.storeEvent(any()) } just Runs
 
             // When: Execute command
-            manager.acceptCommand("order-1", TestCommand.CreateOrder(100))
+            val result = manager.acceptCommand("order-1", "cmd-3", TestCommand.CreateOrder(100))
 
             // Then: Event stored with next sequence number
             coVerify(exactly = 1) {
@@ -143,10 +103,93 @@ class DefaultAggregateManagerTest {
                     match {
                         it.entityId == "order-1" &&
                             it.sequenceNumber == 8L &&
-                            it.event == TestEvent.OrderCreated(125, 25, 100)
+                            it.event == TestEvent.OrderCreated(125, 25, 100) &&
+                            it.originCommandId == "cmd-3"
                     },
                 )
             }
+            assertEquals(TestState("order-1", amount = 125), result)
+        }
+
+    @Test
+    fun `successful command execution - no snapshot but with events`() =
+        runTest {
+            // Given: No snapshot
+            coEvery { repository.loadLatestSnapshot("order-1") } returns null
+
+            // And: events
+            val events: Flow<AggregateRepository.EventRecord<TestEvent>> =
+                flowOf(
+                    AggregateRepository.EventRecord(
+                        entityId = "order-1",
+                        event = TestEvent.OrderCreated(25, 50, -25),
+                        sequenceNumber = 1,
+                        timestamp = OffsetDateTime.now(),
+                        "cmd-1",
+                    ),
+                    AggregateRepository.EventRecord(
+                        entityId = "order-1",
+                        event = TestEvent.OrderCreated(25, 25, 0),
+                        sequenceNumber = 2,
+                        timestamp = OffsetDateTime.now(),
+                        "cmd-2",
+                    ),
+                )
+            coEvery { repository.loadEvents("order-1", 1) } returns events
+            coEvery { repository.storeEvent(any()) } just Runs
+
+            // When: Execute command
+            val result = manager.acceptCommand("order-1", "cmd-3", TestCommand.CreateOrder(100))
+
+            // Then: Event stored with next sequence number
+            coVerify(exactly = 1) {
+                repository.storeEvent(
+                    match {
+                        it.entityId == "order-1" &&
+                            it.sequenceNumber == 3L &&
+                            it.event == TestEvent.OrderCreated(125, 25, 100) &&
+                            it.originCommandId == "cmd-3"
+                    },
+                )
+            }
+            assertEquals(TestState("order-1", amount = 125), result)
+        }
+
+    @Test
+    fun `successful command execution - idempotent command`() =
+        runTest {
+            // Given: No snapshot
+            coEvery { repository.loadLatestSnapshot("order-1") } returns null
+
+            // And: events
+            val events: Flow<AggregateRepository.EventRecord<TestEvent>> =
+                flowOf(
+                    AggregateRepository.EventRecord(
+                        entityId = "order-1",
+                        event = TestEvent.OrderCreated(25, 0, 25),
+                        sequenceNumber = 1,
+                        timestamp = OffsetDateTime.now(),
+                        "cmd-1",
+                    ),
+                    AggregateRepository.EventRecord(
+                        entityId = "order-1",
+                        event = TestEvent.OrderCreated(136, 25, 111),
+                        sequenceNumber = 2,
+                        timestamp = OffsetDateTime.now(),
+                        "cmd-2",
+                    ),
+                )
+            coEvery { repository.loadEvents("order-1", 1) } returns events
+            coEvery { repository.storeEvent(any()) } just Runs
+
+            // When: Execute command
+            val result = manager.acceptCommand("order-1", "cmd-1", TestCommand.CreateOrder(100))
+
+            // Then: No event stored
+            coVerify(exactly = 0) {
+                repository.storeEvent(any())
+            }
+            assertEquals(TestState("order-1", amount = 25), result)
         }
 
     @Test
@@ -159,7 +202,7 @@ class DefaultAggregateManagerTest {
             // When/Then: Domain rejection throws CommandRejectionException
             val exception =
                 assertThrows<CommandRejectionException> {
-                    manager.acceptCommand("order-1", TestCommand.InvalidCommand("bad request"))
+                    manager.acceptCommand("order-1", "cmd-1", TestCommand.InvalidCommand("bad request"))
                 }
 
             assertEquals("bad request", exception.reason)
@@ -183,7 +226,7 @@ class DefaultAggregateManagerTest {
             // When/Then: Repository exception propagated (caller handles retries)
             val exception =
                 assertThrows<EventSourcingRepositoryException> {
-                    manager.acceptCommand("order-1", TestCommand.CreateOrder(100))
+                    manager.acceptCommand("order-1", "cmd-1", TestCommand.CreateOrder(100))
                 }
 
             assertSame(dbException, exception)
@@ -202,7 +245,7 @@ class DefaultAggregateManagerTest {
             // When/Then: Repository exception propagated
             val exception =
                 assertThrows<EventSourcingRepositoryException> {
-                    manager.acceptCommand("order-1", TestCommand.CreateOrder(100))
+                    manager.acceptCommand("order-1", "cmd-1", TestCommand.CreateOrder(100))
                 }
 
             assertSame(dbException, exception)
@@ -218,7 +261,7 @@ class DefaultAggregateManagerTest {
             // When/Then: Wrapped in CommandRejectionException
             val exception =
                 assertThrows<CommandRejectionException> {
-                    manager.acceptCommand("order-1", TestCommand.CreateOrder(100))
+                    manager.acceptCommand("order-1", "cmd-1", TestCommand.CreateOrder(100))
                 }
 
             assertEquals("LOCAL_EXECUTION_ERROR", exception.errorCode)
@@ -232,7 +275,7 @@ class DefaultAggregateManagerTest {
             val snapshot =
                 AggregateRepository.SnapshotRecord(
                     entityId = "order-1",
-                    state = TestState("order-1", amount = 100, created = true),
+                    state = TestState("order-1", amount = 100),
                     sequenceNumber = 3,
                     timestamp = OffsetDateTime.now(),
                 )
@@ -246,12 +289,14 @@ class DefaultAggregateManagerTest {
                         event = TestEvent.OrderCreated(150, 100, 50),
                         sequenceNumber = 4,
                         timestamp = OffsetDateTime.now(),
+                        "cmd-1",
                     ),
                     AggregateRepository.EventRecord(
                         entityId = "order-1",
                         event = TestEvent.OrderCreated(175, 150, 25),
                         sequenceNumber = 5,
                         timestamp = OffsetDateTime.now(),
+                        "cmd-2",
                     ),
                 )
             coEvery { repository.loadEvents("order-1", 4) } returns events
@@ -260,11 +305,12 @@ class DefaultAggregateManagerTest {
             coEvery { repository.storeEvent(capture(storedEvent)) } just Runs
 
             // When: Execute command (state should be rebuilt: 100 (snapshot) -> 150 -> 175)
-            manager.acceptCommand("order-1", TestCommand.CreateOrder(200))
+            manager.acceptCommand("order-1", "cmd-3", TestCommand.CreateOrder(200))
 
             // Then: Verify final event stored
             assertEquals("order-1", storedEvent.captured.entityId)
             assertEquals(6L, storedEvent.captured.sequenceNumber)
             assertEquals(TestEvent.OrderCreated(375, 175, 200), storedEvent.captured.event)
+            assertEquals("cmd-3", storedEvent.captured.originCommandId)
         }
 }

@@ -3,27 +3,36 @@ package com.rmpader.eventsourcing
 import com.rmpader.eventsourcing.coordination.AggregateCoordinator
 import com.rmpader.eventsourcing.coordination.CommandTransport
 import com.rmpader.eventsourcing.repository.EventSourcingRepositoryException
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 
 abstract class CoordinatedAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
     private val coordinator: AggregateCoordinator,
-    private val commandTransport: CommandTransport<C>,
+    private val commandTransport: CommandTransport<C, S>,
     private val localDelegate: AggregateManager<C, E, S>,
 ) : AggregateManager<C, E, S> {
     override suspend fun acceptCommand(
         entityId: String,
+        commandId: String,
         command: C,
-    ) {
+    ): S {
         try {
-            when (val location = coordinator.locateAggregate(entityId)) {
-                is AggregateCoordinator.AggregateLocation.Local ->
-                    executeLocally(entityId, command)
+            return when (val location = coordinator.locateAggregate(entityId)) {
+                is AggregateCoordinator.AggregateLocation.Local -> {
+                    logger.info("Executing command locally: $commandId")
+                    executeLocally(entityId, commandId, command)
+                }
 
-                is AggregateCoordinator.AggregateLocation.Remote ->
+                is AggregateCoordinator.AggregateLocation.Remote -> {
+                    logger.info("Executing command remotely to ${location.nodeId}: $commandId")
+
                     commandTransport.sendToNode(
                         location.nodeId,
                         entityId,
+                        commandId,
                         command,
                     )
+                }
             }
         } catch (e: EventSourcingRepositoryException) {
             throw e
@@ -40,10 +49,11 @@ abstract class CoordinatedAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
 
     suspend fun executeLocally(
         entityId: String,
+        commandId: String,
         command: C,
-    ) {
+    ): S {
         try {
-            localDelegate.acceptCommand(entityId, command)
+            return localDelegate.acceptCommand(entityId, commandId, command)
         } catch (e: EventSourcingRepositoryException) {
             throw e
         } catch (e: CommandRejectionException) {
@@ -55,5 +65,9 @@ abstract class CoordinatedAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
                 rootCause = e,
             )
         }
+    }
+
+    companion object {
+        private val logger: Logger = LoggerFactory.getLogger(CoordinatedAggregateManager::class.java)
     }
 }

@@ -14,7 +14,7 @@ import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import java.time.LocalDateTime
 import java.time.ZoneOffset
-import java.util.UUID
+import java.util.*
 
 class RelationalAggregateRepository<E, S>(
     val connectionFactory: ConnectionFactory,
@@ -35,7 +35,7 @@ class RelationalAggregateRepository<E, S>(
                                 connection
                                     .createStatement(
                                         """
-                        SELECT ENTITY_ID, EVENT_DATA, SEQUENCE_NUMBER, TIMESTAMP
+                        SELECT ENTITY_ID, EVENT_DATA, SEQUENCE_NUMBER, TIMESTAMP, ORIGIN_COMMAND_ID
                         FROM EVENT_JOURNAL
                         WHERE ENTITY_ID = $1 AND SEQUENCE_NUMBER >= $2
                         ORDER BY SEQUENCE_NUMBER ASC
@@ -56,6 +56,7 @@ class RelationalAggregateRepository<E, S>(
                                             row
                                                 .get("TIMESTAMP", LocalDateTime::class.java)!!
                                                 .atOffset(ZoneOffset.UTC),
+                                        originCommandId = row.get("ORIGIN_COMMAND_ID", String::class.java)!!,
                                     )
                                 }
                             }
@@ -329,12 +330,13 @@ class RelationalAggregateRepository<E, S>(
                 .createStatement(
                     """
                             INSERT INTO EVENT_JOURNAL 
-                            (ENTITY_ID, SEQUENCE_NUMBER, EVENT_DATA)
-                            VALUES ($1, $2, $3)
+                            (ENTITY_ID, SEQUENCE_NUMBER, EVENT_DATA, ORIGIN_COMMAND_ID)
+                            VALUES ($1, $2, $3, $4)
                         """,
                 ).bind(0, eventRecord.entityId)
                 .bind(1, eventRecord.sequenceNumber)
                 .bind(2, serializer.serialize(eventRecord.event))
+                .bind(3, eventRecord.originCommandId)
                 .execute(),
         )
 }

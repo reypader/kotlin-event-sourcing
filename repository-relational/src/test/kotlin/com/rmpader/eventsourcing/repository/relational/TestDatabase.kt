@@ -75,18 +75,20 @@ object TestDatabase {
         entityId: String,
         eventData: String,
         sequenceNumber: Long,
+        originCommandId: String,
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
                 SELECT COUNT(*) as CNT
                 FROM EVENT_JOURNAL
-                WHERE ENTITY_ID = ? AND EVENT_DATA = ? AND SEQUENCE_NUMBER = ?
+                WHERE ENTITY_ID = ? AND EVENT_DATA = ? AND SEQUENCE_NUMBER = ? AND ORIGIN_COMMAND_ID = ?
             """
 
             connection.prepareStatement(sql).use { statement ->
                 statement.setString(1, entityId)
                 statement.setString(2, eventData)
                 statement.setLong(3, sequenceNumber)
+                statement.setString(4, originCommandId)
 
                 statement.executeQuery().use { rs ->
                     rs.next()
@@ -254,17 +256,19 @@ object TestDatabase {
         entityId: String,
         eventData: String,
         sequenceNumber: Long,
+        originCommandId: String,
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
-                INSERT INTO EVENT_JOURNAL (ENTITY_ID, SEQUENCE_NUMBER, EVENT_DATA)
-                VALUES (?, ?, ?)
+                INSERT INTO EVENT_JOURNAL (ENTITY_ID, SEQUENCE_NUMBER, EVENT_DATA, ORIGIN_COMMAND_ID)
+                VALUES (?, ?, ?, ?)
             """
 
             connection.prepareStatement(sql).use { statement ->
                 statement.setString(1, entityId)
                 statement.setLong(2, sequenceNumber)
                 statement.setString(3, eventData)
+                statement.setString(4, originCommandId)
                 statement.executeUpdate()
             }
         }

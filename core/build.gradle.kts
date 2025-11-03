@@ -11,6 +11,9 @@ dependencies {
     // Coroutines
     api(libs.kotlinx.coroutines.reactor)
 
+    // SLF4J
+    implementation(libs.slf4j.api)
+
     // Test
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)

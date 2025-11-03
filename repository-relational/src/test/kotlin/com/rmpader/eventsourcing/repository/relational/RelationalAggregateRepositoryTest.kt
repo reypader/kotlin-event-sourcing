@@ -47,6 +47,7 @@ class RelationalAggregateRepositoryTest {
                     event = event,
                     sequenceNumber = 1L,
                     timestamp = OffsetDateTime.now(ZoneOffset.UTC),
+                    originCommandId = "cmd-1",
                 )
 
             // When
@@ -57,6 +58,7 @@ class RelationalAggregateRepositoryTest {
                 entityId = entityId,
                 eventData = "test-event|42",
                 sequenceNumber = 1L,
+                originCommandId = "cmd-1",
             )
 
             TestDatabase.assertEventOutboxContains(
@@ -79,6 +81,7 @@ class RelationalAggregateRepositoryTest {
                     TestEvent("event-1", 1),
                     1L,
                     OffsetDateTime.now(ZoneOffset.UTC),
+                    originCommandId = "cmd-1",
                 ),
             )
             TestDatabase.assertEventJournalCount(1L)
@@ -92,6 +95,7 @@ class RelationalAggregateRepositoryTest {
                         TestEvent("event-duplicate", 2),
                         1L,
                         OffsetDateTime.now(ZoneOffset.UTC),
+                        originCommandId = "cmd-2",
                     ),
                 )
                 throw AssertionError("Expected duplicate key exception")
@@ -104,7 +108,7 @@ class RelationalAggregateRepositoryTest {
             TestDatabase.assertEventJournalCount(1L)
             TestDatabase.assertEventOutboxCount(1L)
 
-            TestDatabase.assertEventJournalContains(entityId, "event-1|1", 1L)
+            TestDatabase.assertEventJournalContains(entityId, "event-1|1", 1L, "cmd-1")
             TestDatabase.assertEventOutboxContains("$entityId|1", "event-1|1")
         }
 
@@ -114,7 +118,7 @@ class RelationalAggregateRepositoryTest {
             println("kotlinx.coroutines.debug = ${System.getProperty("kotlinx.coroutines.debug")}")
             // Given
             val entityId = "test-entity-orphan-journal"
-            TestDatabase.insertJournalDirect(entityId, "orphan-event|99", 1L)
+            TestDatabase.insertJournalDirect(entityId, "orphan-event|99", 1L, "cmd-1")
 
             TestDatabase.assertEventJournalCount(1L)
             TestDatabase.assertEventOutboxCount(0L)
@@ -127,6 +131,7 @@ class RelationalAggregateRepositoryTest {
                         TestEvent("new-event", 1),
                         1L,
                         OffsetDateTime.now(ZoneOffset.UTC),
+                        originCommandId = "cmd-2",
                     ),
                 )
                 throw AssertionError("Expected constraint violation due to existing journal entry")
@@ -140,7 +145,7 @@ class RelationalAggregateRepositoryTest {
             TestDatabase.assertEventOutboxCount(0L)
 
             // Original orphaned journal data intact
-            TestDatabase.assertEventJournalContains(entityId, "orphan-event|99", 1L)
+            TestDatabase.assertEventJournalContains(entityId, "orphan-event|99", 1L, "cmd-1")
         }
 
     @Test
@@ -161,6 +166,7 @@ class RelationalAggregateRepositoryTest {
                         TestEvent("new-event", 1),
                         1L,
                         OffsetDateTime.now(ZoneOffset.UTC),
+                        originCommandId = "cmd-1",
                     ),
                 )
                 throw AssertionError("Expected constraint violation due to existing outbox entry")
@@ -197,7 +203,7 @@ class RelationalAggregateRepositoryTest {
             // Given
             val entityId = "test-entity-2"
             (1L..3L).forEach {
-                TestDatabase.insertJournalDirect(entityId, "event-$it|$it", it)
+                TestDatabase.insertJournalDirect(entityId, "event-$it|$it", it, "cmd-$it")
             }
 
             // When
@@ -209,6 +215,7 @@ class RelationalAggregateRepositoryTest {
                 assertEquals("event-$it", events[it - 1].event.name)
                 assertEquals(it, events[it - 1].event.value)
                 assertEquals(it.toLong(), events[it - 1].sequenceNumber)
+                assertEquals("cmd-$it", events[it - 1].originCommandId)
             }
         }
 
@@ -217,7 +224,7 @@ class RelationalAggregateRepositoryTest {
         runTest {
             val entityId = "test-entity"
             (1L..3L).forEach {
-                TestDatabase.insertJournalDirect(entityId, "event-$it|$it", it)
+                TestDatabase.insertJournalDirect(entityId, "event-$it|$it", it, "cmd-$it")
             }
 
             // Should only return events 2 and 3
@@ -241,6 +248,7 @@ class RelationalAggregateRepositoryTest {
                     TestEvent("event-1", 1),
                     1L,
                     OffsetDateTime.now(ZoneOffset.UTC),
+                    "cmd-1",
                 ),
             )
             repository.storeEvent(
@@ -249,6 +257,7 @@ class RelationalAggregateRepositoryTest {
                     TestEvent("event-2", 2),
                     2L,
                     OffsetDateTime.now(ZoneOffset.UTC),
+                    "cmd-2",
                 ),
             )
             repository.storeEvent(
@@ -257,13 +266,14 @@ class RelationalAggregateRepositoryTest {
                     TestEvent("event-3", 3),
                     3L,
                     OffsetDateTime.now(ZoneOffset.UTC),
+                    "cmd-3",
                 ),
             )
 
             // Then
             TestDatabase.assertEventJournalCount(3L)
             (1L..3L).forEach {
-                TestDatabase.assertEventJournalContains(entityId, "event-$it|$it", it)
+                TestDatabase.assertEventJournalContains(entityId, "event-$it|$it", it, "cmd-$it")
             }
         }
 

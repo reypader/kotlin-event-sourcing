@@ -9,6 +9,7 @@ interface AggregateRepository<E, S> {
         val event: E,
         val sequenceNumber: Long,
         val timestamp: OffsetDateTime,
+        val originCommandId: String,
     )
 
     data class OutboxRecord<E>(

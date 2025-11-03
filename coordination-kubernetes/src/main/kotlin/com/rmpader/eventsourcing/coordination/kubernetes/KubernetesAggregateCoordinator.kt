@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
+import java.time.OffsetDateTime
+import java.time.ZoneOffset.UTC
 
 /**
  * Kubernetes-native aggregate coordinator using Informer pattern for pod discovery
@@ -25,7 +27,15 @@ class KubernetesAggregateCoordinator private constructor(
     private val informerFactory: SharedInformerFactory,
 ) : AggregateCoordinator {
     private val clusterMembers = MutableStateFlow<Set<String>>(emptySet())
+
+    // Initialized during start() and only used in updateClusterMembers which is also only wired to event handlers during start
     private lateinit var podInformer: SharedIndexInformer<V1Pod>
+
+    @Volatile
+    private var informerStarted = false
+
+    @Volatile
+    private var lastUpdateTime: OffsetDateTime? = null
 
     override fun start() {
         logger.info("Starting KubernetesAggregateCoordinator...")
@@ -78,6 +88,7 @@ class KubernetesAggregateCoordinator private constructor(
 
         logger.info("Starting Informers...")
         informerFactory.startAllRegisteredInformers()
+        informerStarted = true
 
         logger.info("Initial cluster membership update...")
         updateClusterMembers()
@@ -92,6 +103,7 @@ class KubernetesAggregateCoordinator private constructor(
     override fun stop() {
         logger.info("Stopping Informers...")
         informerFactory.stopAllRegisteredInformers()
+        informerStarted = false
     }
 
     override fun locateAggregate(aggregateId: String): AggregateLocation {
@@ -112,6 +124,46 @@ class KubernetesAggregateCoordinator private constructor(
         }
     }
 
+    override fun checkHealth(): AggregateCoordinator.HealthStatus {
+        val now = OffsetDateTime.now(UTC)
+        val timeSinceLastUpdate =
+            lastUpdateTime?.let {
+                java.time.Duration.between(it, now)
+            }
+        val updateStale = (lastUpdateTime == null)
+
+        val details =
+            mutableMapOf(
+                "informerStarted" to informerStarted.toString(),
+                "informerSynced" to podInformer.hasSynced().toString(),
+                "updateStale" to updateStale.toString(),
+                "timeSinceLastUpdate" to timeSinceLastUpdate?.toMillis().toString(),
+                "clusterSize" to clusterMembers.value.size.toString(),
+            )
+
+        return when {
+            !informerStarted ->
+                AggregateCoordinator.HealthStatus.unhealthy(
+                    "Informer not started",
+                    details,
+                )
+
+            !podInformer.hasSynced() ->
+                AggregateCoordinator.HealthStatus.unhealthy(
+                    "Pod informer has not synced",
+                    details,
+                )
+
+            updateStale ->
+                AggregateCoordinator.HealthStatus.unhealthy(
+                    "Cluster membership update is stale (${timeSinceLastUpdate}ms since last update)",
+                    details,
+                )
+
+            else -> AggregateCoordinator.HealthStatus.healthy(details)
+        }
+    }
+
     private fun updateClusterMembers() {
         try {
             logger.info("Fetching cluster membership...")
@@ -128,7 +180,7 @@ class KubernetesAggregateCoordinator private constructor(
                     }.toSet()
 
             clusterMembers.value = readyPods
-
+            lastUpdateTime = OffsetDateTime.now(UTC)
             logger.debug("Updated cluster members: $readyPods")
         } catch (e: Exception) {
             logger.error("Error updating cluster members: ${e.message}", e)

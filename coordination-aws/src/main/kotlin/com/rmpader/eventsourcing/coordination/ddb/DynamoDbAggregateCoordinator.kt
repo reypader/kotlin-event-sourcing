@@ -24,6 +24,8 @@ import java.time.OffsetDateTime
 import java.time.ZoneOffset.UTC
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.toJavaDuration
+import kotlin.time.toKotlinDuration
 
 /**
  * DynamoDB-based membership with TTL heartbeats.
@@ -40,6 +42,12 @@ class DynamoDbAggregateCoordinator private constructor(
     private var scanJob: Job? = null
 
     private val clusterMembers = MutableStateFlow<List<String>>(emptyList())
+
+    @Volatile
+    private var lastHeartbeatTime: OffsetDateTime? = null
+
+    @Volatile
+    private var lastScanTime: OffsetDateTime? = null
 
     override fun start() {
         logger.info("Starting DynamoDbAggregateCoordinator...")
@@ -126,52 +134,114 @@ class DynamoDbAggregateCoordinator private constructor(
         }
     }
 
-    private suspend fun sendHeartbeat() {
-        val now = System.currentTimeMillis() / 1000
-        val expiresAt = now + ttl.inWholeSeconds
+    override fun checkHealth(): AggregateCoordinator.HealthStatus {
+        val now = OffsetDateTime.now()
+        val heartbeatJobActive = heartbeatJob?.isActive ?: false
+        val scanJobActive = scanJob?.isActive ?: false
 
-        logger.debug("Sending heartbeat for node $nodeId (ttl: $expiresAt)")
-        dynamoDbClient.putItem(
-            PutItemRequest {
-                tableName = this@DynamoDbAggregateCoordinator.tableName
-                item =
-                    mapOf(
-                        "nodeId" to AttributeValue.S(nodeId),
-                        "lastHeartbeat" to AttributeValue.N(now.toString()),
-                        "ttl" to AttributeValue.N(expiresAt.toString()),
-                    )
-            },
-        )
+        val heartbeatStale =
+            lastHeartbeatTime?.let {
+                val timeSinceLastHeartbeat = java.time.Duration.between(it, now)
+                timeSinceLastHeartbeat.toKotlinDuration() > (heartbeatInterval * 3)
+            } ?: true
+        val scanStale =
+            lastScanTime?.let {
+                val timeSinceLastScan = java.time.Duration.between(it, now)
+                timeSinceLastScan.toKotlinDuration() > (heartbeatInterval * 3)
+            } ?: true
+
+        val details =
+            mutableMapOf(
+                "heartbeatJobActive" to heartbeatJobActive.toString(),
+                "scanJobActive" to scanJobActive.toString(),
+                "clusterSize" to clusterMembers.value.size.toString(),
+            )
+
+        return when {
+            !heartbeatJobActive ->
+                AggregateCoordinator.HealthStatus.unhealthy(
+                    "Heartbeat job is not active",
+                    details,
+                )
+
+            !scanJobActive ->
+                AggregateCoordinator.HealthStatus.unhealthy(
+                    "Scan job is not active",
+                    details,
+                )
+
+            heartbeatStale ->
+                AggregateCoordinator.HealthStatus.unhealthy(
+                    "Heartbeat is stale",
+                    details,
+                )
+
+            scanStale ->
+                AggregateCoordinator.HealthStatus.unhealthy(
+                    "Membership scan is stale",
+                    details,
+                )
+
+            else -> AggregateCoordinator.HealthStatus.healthy(details)
+        }
     }
 
-    private suspend fun updateMembership() {
-        logger.info("Fetching cluster membership...")
-        val now = OffsetDateTime.now(UTC).toInstant().epochSecond
-        logger.debug("Filtering ttl against: $now")
-        val response =
-            dynamoDbClient.scan(
-                ScanRequest {
+    private suspend fun sendHeartbeat() {
+        try {
+            val now = OffsetDateTime.now(UTC)
+            val expiresAt = now.plus(ttl.toJavaDuration()).toInstant().epochSecond
+
+            logger.debug("Sending heartbeat for node $nodeId (ttl: $expiresAt)")
+            dynamoDbClient.putItem(
+                PutItemRequest {
                     tableName = this@DynamoDbAggregateCoordinator.tableName
-                    filterExpression = "#ttl > :now"
-                    expressionAttributeNames = mapOf("#ttl" to "ttl")
-                    expressionAttributeValues =
+                    item =
                         mapOf(
-                            ":now" to AttributeValue.N(now.toString()),
+                            "nodeId" to AttributeValue.S(nodeId),
+                            "lastHeartbeat" to AttributeValue.N(now.toString()),
+                            "ttl" to AttributeValue.N(expiresAt.toString()),
                         )
                 },
             )
+            lastHeartbeatTime = OffsetDateTime.now(UTC)
+        } catch (e: Exception) {
+            throw e
+        }
+    }
 
-        val activeNodes =
-            response.items?.mapNotNull { item ->
-                item["nodeId"]?.asS()?.also { nodeId ->
-                    logger.debug("Node $nodeId is active")
-                }
-            } ?: emptyList()
+    private suspend fun updateMembership() {
+        try {
+            logger.info("Fetching cluster membership...")
+            val now = OffsetDateTime.now(UTC).toInstant().epochSecond
+            logger.debug("Filtering ttl against: $now")
+            val response =
+                dynamoDbClient.scan(
+                    ScanRequest {
+                        tableName = this@DynamoDbAggregateCoordinator.tableName
+                        filterExpression = "#ttl > :now"
+                        expressionAttributeNames = mapOf("#ttl" to "ttl")
+                        expressionAttributeValues =
+                            mapOf(
+                                ":now" to AttributeValue.N(now.toString()),
+                            )
+                    },
+                )
 
-        logger.debug("Found ${activeNodes.size} active members: ${activeNodes.joinToString(", ")}")
-        clusterMembers.value = activeNodes.sorted()
+            val activeNodes =
+                response.items?.mapNotNull { item ->
+                    item["nodeId"]?.asS()?.also { nodeId ->
+                        logger.debug("Node $nodeId is active")
+                    }
+                } ?: emptyList()
 
-        logger.debug("Updated cluster members: $activeNodes")
+            logger.debug("Found ${activeNodes.size} active members: ${activeNodes.joinToString(", ")}")
+            clusterMembers.value = activeNodes
+
+            logger.debug("Updated cluster members: $activeNodes")
+            lastScanTime = OffsetDateTime.now(UTC)
+        } catch (e: Exception) {
+            throw e
+        }
     }
 
     private fun hash(combined: String): Long {

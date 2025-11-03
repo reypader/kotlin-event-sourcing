@@ -14,7 +14,7 @@ import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import java.time.LocalDateTime
 import java.time.ZoneOffset
-import java.util.*
+import java.util.UUID
 
 class RelationalAggregateRepository<E, S>(
     val connectionFactory: ConnectionFactory,

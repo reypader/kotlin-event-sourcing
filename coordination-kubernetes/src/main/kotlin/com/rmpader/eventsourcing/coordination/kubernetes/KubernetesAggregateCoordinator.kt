@@ -181,7 +181,7 @@ class KubernetesAggregateCoordinator private constructor(
 
             clusterMembers.value = readyPods
             lastUpdateTime = OffsetDateTime.now(UTC)
-            logger.debug("Updated cluster members: $readyPods")
+            logger.debug("Updated cluster members: {}", readyPods)
         } catch (e: Exception) {
             logger.error("Error updating cluster members: ${e.message}", e)
         }

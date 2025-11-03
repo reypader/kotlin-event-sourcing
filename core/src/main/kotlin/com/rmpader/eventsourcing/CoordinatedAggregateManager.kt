@@ -10,6 +10,7 @@ abstract class CoordinatedAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
     private val coordinator: AggregateCoordinator,
     private val commandTransport: CommandTransport<C, S>,
     private val localDelegate: AggregateManager<C, E, S>,
+    private val localFallbackCondition: (Exception) -> Boolean = { false },
 ) : AggregateManager<C, E, S> {
     override suspend fun acceptCommand(
         entityId: String,
@@ -26,7 +27,7 @@ abstract class CoordinatedAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
                 is AggregateCoordinator.AggregateLocation.Remote -> {
                     logger.info("Executing command remotely to ${location.nodeId}: $commandId")
 
-                    commandTransport.sendToNode(
+                    executeRemotely(
                         location.nodeId,
                         entityId,
                         commandId,
@@ -44,6 +45,35 @@ abstract class CoordinatedAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
                 errorCode = "REMOTE_EXECUTION_ERROR",
                 rootCause = e,
             )
+        }
+    }
+
+    suspend fun executeRemotely(
+        nodeId: String,
+        entityId: String,
+        commandId: String,
+        command: C,
+    ): S {
+        try {
+            return commandTransport.sendToNode(
+                nodeId,
+                entityId,
+                commandId,
+                command,
+            )
+        } catch (e: Exception) {
+            if (localFallbackCondition(e)) {
+                return executeLocally(entityId, commandId, command)
+            } else {
+                when (e) {
+                    is CommandRejectionException -> throw e
+                    else -> throw CommandRejectionException(
+                        reason = "Command processing failed: ${e.message ?: "Unknown error"}",
+                        errorCode = "REMOTE_EXECUTION_ERROR",
+                        rootCause = e,
+                    )
+                }
+            }
         }
     }
 

@@ -192,6 +192,82 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
         }
 
     @Test
+    fun `acceptCommand - remote - transport exception fallback to local`() =
+        runTest {
+            // setup
+            val manager =
+                object : CoordinatedAggregateManager<TestCommand, TestEvent, TestState>(
+                    coordinator = coordinator,
+                    commandTransport = transport,
+                    localDelegate = localDelegate,
+                    localFallbackCondition = { true },
+                ) {
+                    override fun initializeAggregate(entityId: String) = TestState(entityId)
+                }
+            val testCommand = TestCommand.CreateOrder(100)
+            // Given: Remote aggregate with transport failure
+            every { coordinator.locateAggregate("order-1") } returns
+                AggregateLocation.Remote("node-2")
+            coEvery { transport.sendToNode(any(), any(), any(), any()) } throws
+                RuntimeException("Network timeout")
+            coEvery { localDelegate.acceptCommand("order-1", "cmd-1", testCommand) } returns TestState("order-1")
+
+            // When: Accept command
+            val result = manager.acceptCommand("order-1", "cmd-1", testCommand)
+
+            // Then: Wrapped in CommandRejectionException
+            coVerify(exactly = 1) {
+                localDelegate.acceptCommand("order-1", "cmd-1", testCommand)
+            }
+            assertEquals(TestState("order-1"), result)
+        }
+
+    @Test
+    fun `acceptCommand - remote - fallback exception propagated`() =
+        runTest {
+            // setup
+            val manager =
+                object : CoordinatedAggregateManager<TestCommand, TestEvent, TestState>(
+                    coordinator = coordinator,
+                    commandTransport = transport,
+                    localDelegate = localDelegate,
+                    localFallbackCondition = { true },
+                ) {
+                    override fun initializeAggregate(entityId: String) = TestState(entityId)
+                }
+            val testCommand = TestCommand.CreateOrder(100)
+
+            // Given: Remote node rejects command
+            every { coordinator.locateAggregate("order-1") } returns
+                AggregateLocation.Remote("node-2")
+            val remoteRejection =
+                CommandRejectionException(
+                    reason = "Insufficient stock",
+                    errorCode = "OUT_OF_STOCK",
+                )
+            coEvery { transport.sendToNode(any(), any(), any(), any()) } throws remoteRejection
+            coEvery {
+                localDelegate.acceptCommand(
+                    "order-1",
+                    "cmd-1",
+                    testCommand,
+                )
+            } throws RuntimeException("Network timeout")
+
+            // When/Then: Remote rejection propagated as-is
+            val exception =
+                assertThrows<CommandRejectionException> {
+                    manager.acceptCommand("order-1", "cmd-1", TestCommand.CreateOrder(100))
+                }
+
+            coVerify(exactly = 1) {
+                localDelegate.acceptCommand("order-1", "cmd-1", testCommand)
+            }
+
+            assertEquals("LOCAL_EXECUTION_ERROR", exception.errorCode)
+        }
+
+    @Test
     fun `coordinator exception wrapped`() =
         runTest {
             // Given: Coordinator throws unexpected exception

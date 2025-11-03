@@ -96,7 +96,8 @@ object TestDatabase {
                     if (count != 1L) {
                         throw AssertionError(
                             "Expected exactly 1 event in EVENT_JOURNAL with " +
-                                "entityId='$entityId', eventData='$eventData', sequenceNumber=$sequenceNumber, " +
+                                "entityId='$entityId', eventData='$eventData', " +
+                                "sequenceNumber=$sequenceNumber, originCommandId=$originCommandId, " +
                                 "but found $count",
                         )
                     }

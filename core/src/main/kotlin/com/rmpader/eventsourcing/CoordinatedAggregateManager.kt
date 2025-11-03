@@ -6,7 +6,7 @@ import com.rmpader.eventsourcing.repository.EventSourcingRepositoryException
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
-abstract class CoordinatedAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
+class CoordinatedAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
     private val coordinator: AggregateCoordinator,
     private val commandTransport: CommandTransport<C, S>,
     private val localDelegate: AggregateManager<C, E, S>,
@@ -63,6 +63,7 @@ abstract class CoordinatedAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
             )
         } catch (e: Exception) {
             if (localFallbackCondition(e)) {
+                logger.info("Falling back to local processing...")
                 return executeLocally(entityId, commandId, command)
             } else {
                 when (e) {

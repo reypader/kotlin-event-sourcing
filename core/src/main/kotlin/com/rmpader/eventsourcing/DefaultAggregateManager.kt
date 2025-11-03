@@ -8,8 +8,9 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.time.OffsetDateTime
 
-abstract class DefaultAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
+class DefaultAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
     val repository: AggregateRepository<E, S>,
+    val aggregateInitializer: (String) -> S,
 ) : AggregateManager<C, E, S> {
     private sealed class ReplayResult<out S> {
         data class CommandAlreadyProcessed<S>(
@@ -30,7 +31,7 @@ abstract class DefaultAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
     ): S {
         try {
             val snapshotRecord = repository.loadLatestSnapshot(entityId)
-            val currentState = snapshotRecord?.state ?: initializeAggregate(entityId)
+            val currentState = snapshotRecord?.state ?: aggregateInitializer(entityId)
             val currentSequence = snapshotRecord?.sequenceNumber ?: 0
             val events = repository.loadEvents(entityId, currentSequence + 1)
 

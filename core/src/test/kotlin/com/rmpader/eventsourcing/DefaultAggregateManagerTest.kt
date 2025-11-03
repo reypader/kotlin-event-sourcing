@@ -24,11 +24,10 @@ class DefaultAggregateManagerTest : AggregateManagerBaseClass() {
     private val repository = mockk<AggregateRepository<TestEvent, TestState>>()
 
     private val manager =
-        object : DefaultAggregateManager<AggregateManagerBaseClass.TestCommand, TestEvent, TestState>(
+        DefaultAggregateManager(
             repository = repository,
-        ) {
-            override fun initializeAggregate(entityId: String) = TestState.empty(entityId)
-        }
+            aggregateInitializer = { TestState(it, 0) },
+        )
 
     @AfterEach
     fun cleanup() {

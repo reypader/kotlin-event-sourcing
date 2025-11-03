@@ -22,13 +22,11 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
     private val localDelegate = mockk<AggregateManager<TestCommand, TestEvent, TestState>>()
 
     private val manager =
-        object : CoordinatedAggregateManager<TestCommand, TestEvent, TestState>(
+        CoordinatedAggregateManager(
             coordinator = coordinator,
             commandTransport = transport,
             localDelegate = localDelegate,
-        ) {
-            override fun initializeAggregate(entityId: String) = TestState(entityId)
-        }
+        )
 
     @AfterEach
     fun cleanup() {
@@ -196,14 +194,12 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
         runTest {
             // setup
             val manager =
-                object : CoordinatedAggregateManager<TestCommand, TestEvent, TestState>(
+                CoordinatedAggregateManager(
                     coordinator = coordinator,
                     commandTransport = transport,
                     localDelegate = localDelegate,
                     localFallbackCondition = { true },
-                ) {
-                    override fun initializeAggregate(entityId: String) = TestState(entityId)
-                }
+                )
             val testCommand = TestCommand.CreateOrder(100)
             // Given: Remote aggregate with transport failure
             every { coordinator.locateAggregate("order-1") } returns
@@ -227,14 +223,12 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
         runTest {
             // setup
             val manager =
-                object : CoordinatedAggregateManager<TestCommand, TestEvent, TestState>(
+                CoordinatedAggregateManager(
                     coordinator = coordinator,
                     commandTransport = transport,
                     localDelegate = localDelegate,
                     localFallbackCondition = { true },
-                ) {
-                    override fun initializeAggregate(entityId: String) = TestState(entityId)
-                }
+                )
             val testCommand = TestCommand.CreateOrder(100)
 
             // Given: Remote node rejects command

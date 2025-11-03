@@ -20,7 +20,7 @@ open class AggregateManagerBaseClass {
     }
 
     data class TestState(
-        val orderId: String,
+        override val entityId: String,
         val amount: Int = 0,
     ) : AggregateEntity<TestCommand, TestEvent, TestState> {
         override fun handleCommand(command: TestCommand): TestEvent =
@@ -43,9 +43,5 @@ open class AggregateManagerBaseClass {
             when (event) {
                 is TestEvent.OrderCreated -> copy(amount = event.finalAmount)
             }
-
-        companion object {
-            fun empty(id: String) = TestState(id)
-        }
     }
 }

@@ -8,6 +8,9 @@ dependencies {
     implementation(libs.r2dbc.pool)
     implementation(libs.reactor.kotlin.extensions)
 
+    // SLF4J
+    implementation(libs.slf4j.api)
+
     // Test
     testImplementation(kotlin("test"))
     testImplementation(libs.r2dbc.h2)

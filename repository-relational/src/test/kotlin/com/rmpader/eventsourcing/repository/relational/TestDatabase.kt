@@ -86,7 +86,7 @@ object TestDatabase {
 
             connection.prepareStatement(sql).use { statement ->
                 statement.setString(1, entityId)
-                statement.setString(2, eventData)
+                statement.setBlob(2, eventData.toByteArray().inputStream())
                 statement.setLong(3, sequenceNumber)
                 statement.setString(4, originCommandId)
 
@@ -129,7 +129,7 @@ object TestDatabase {
 
             connection.prepareStatement(sql).use { statement ->
                 statement.setString(1, eventId)
-                statement.setString(2, eventData)
+                statement.setBlob(2, eventData.toByteArray().inputStream())
 
                 statement.executeQuery().use { rs ->
                     rs.next()
@@ -162,7 +162,7 @@ object TestDatabase {
 
             connection.prepareStatement(sql).use { statement ->
                 statement.setString(1, entityId)
-                statement.setString(2, stateData)
+                statement.setBlob(2, stateData.toByteArray().inputStream())
                 statement.setLong(3, sequenceNumber)
 
                 statement.executeQuery().use { rs ->
@@ -268,7 +268,7 @@ object TestDatabase {
             connection.prepareStatement(sql).use { statement ->
                 statement.setString(1, entityId)
                 statement.setLong(2, sequenceNumber)
-                statement.setString(3, eventData)
+                statement.setBlob(3, eventData.toByteArray().inputStream())
                 statement.setString(4, originCommandId)
                 statement.executeUpdate()
             }
@@ -287,7 +287,7 @@ object TestDatabase {
 
             connection.prepareStatement(sql).use { statement ->
                 statement.setString(1, eventId)
-                statement.setString(2, eventData)
+                statement.setBlob(2, eventData.toByteArray().inputStream())
                 statement.executeUpdate()
             }
         }
@@ -306,7 +306,7 @@ object TestDatabase {
 
             connection.prepareStatement(sql).use { statement ->
                 statement.setString(1, eventId)
-                statement.setString(2, eventData)
+                statement.setBlob(2, eventData.toByteArray().inputStream())
                 statement.setTimestamp(3, Timestamp.from(claimedAt.toInstant()))
                 statement.setString(4, UUID.randomUUID().toString())
                 statement.executeUpdate()
@@ -328,7 +328,7 @@ object TestDatabase {
             connection.prepareStatement(sql).use { statement ->
                 statement.setString(1, entityId)
                 statement.setLong(2, sequenceNumber)
-                statement.setString(3, stateData)
+                statement.setBlob(3, stateData.toByteArray().inputStream())
                 statement.executeUpdate()
             }
         }

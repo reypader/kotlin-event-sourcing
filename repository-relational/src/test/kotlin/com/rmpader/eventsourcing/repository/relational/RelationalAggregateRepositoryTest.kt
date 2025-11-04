@@ -102,6 +102,7 @@ class RelationalAggregateRepositoryTest {
                 throw AssertionError("Expected duplicate key exception")
             } catch (e: Exception) {
                 assertTrue(e is EventSourcingRepositoryException)
+                e.printStackTrace()
                 assertTrue(e.cause is R2dbcDataIntegrityViolationException)
             }
 
@@ -116,7 +117,6 @@ class RelationalAggregateRepositoryTest {
     @Test
     fun `storeEvent should rollback when conflicting with an orphan journal`() =
         runTest {
-            println("kotlinx.coroutines.debug = ${System.getProperty("kotlinx.coroutines.debug")}")
             // Given
             val entityId = AggregateKey("test-entity-orphan-journal", "test-entity")
             TestDatabase.insertJournalDirect(entityId.toString(), "orphan-event|99", 1L, "cmd-1")
@@ -138,6 +138,7 @@ class RelationalAggregateRepositoryTest {
                 throw AssertionError("Expected constraint violation due to existing journal entry")
             } catch (e: Exception) {
                 assertTrue(e is EventSourcingRepositoryException)
+                e.printStackTrace()
                 assertTrue(e.cause is R2dbcDataIntegrityViolationException)
             }
 
@@ -173,6 +174,7 @@ class RelationalAggregateRepositoryTest {
                 throw AssertionError("Expected constraint violation due to existing outbox entry")
             } catch (e: Exception) {
                 assertTrue(e is EventSourcingRepositoryException)
+                e.printStackTrace()
                 assertTrue(e.cause is R2dbcDataIntegrityViolationException)
             }
 

@@ -1,5 +1,6 @@
 package com.rmpader.eventsourcing.repository.relational
 
+import com.rmpader.eventsourcing.AggregateKey
 import com.rmpader.eventsourcing.repository.AggregateRepository
 import com.rmpader.eventsourcing.repository.EventSourcingRepositoryException
 import io.r2dbc.spi.R2dbcDataIntegrityViolationException
@@ -39,11 +40,11 @@ class RelationalAggregateRepositoryTest {
     fun `storeEvent should persist event to journal and outbox transactionally`() =
         runTest {
             // Given
-            val entityId = "test-entity-1"
+            val entityId = AggregateKey("test-entity-1", "test-entity")
             val event = TestEvent("test-event", 42)
             val eventRecord =
                 AggregateRepository.EventRecord(
-                    entityId = entityId,
+                    aggregateKey = entityId,
                     event = event,
                     sequenceNumber = 1L,
                     timestamp = OffsetDateTime.now(ZoneOffset.UTC),
@@ -55,7 +56,7 @@ class RelationalAggregateRepositoryTest {
 
             // Then
             TestDatabase.assertEventJournalContains(
-                entityId = entityId,
+                entityId = entityId.toString(),
                 eventData = "test-event|42",
                 sequenceNumber = 1L,
                 originCommandId = "cmd-1",
@@ -74,7 +75,7 @@ class RelationalAggregateRepositoryTest {
     fun `storeEvent should rollback transaction on duplicate persist`() =
         runTest {
             // Given
-            val entityId = "test-entity-duplicate"
+            val entityId = AggregateKey("test-entity-duplicate", "test-entity")
             repository.storeEvent(
                 AggregateRepository.EventRecord(
                     entityId,
@@ -108,7 +109,7 @@ class RelationalAggregateRepositoryTest {
             TestDatabase.assertEventJournalCount(1L)
             TestDatabase.assertEventOutboxCount(1L)
 
-            TestDatabase.assertEventJournalContains(entityId, "event-1|1", 1L, "cmd-1")
+            TestDatabase.assertEventJournalContains(entityId.toString(), "event-1|1", 1L, "cmd-1")
             TestDatabase.assertEventOutboxContains("$entityId|1", "event-1|1")
         }
 
@@ -117,8 +118,8 @@ class RelationalAggregateRepositoryTest {
         runTest {
             println("kotlinx.coroutines.debug = ${System.getProperty("kotlinx.coroutines.debug")}")
             // Given
-            val entityId = "test-entity-orphan-journal"
-            TestDatabase.insertJournalDirect(entityId, "orphan-event|99", 1L, "cmd-1")
+            val entityId = AggregateKey("test-entity-orphan-journal", "test-entity")
+            TestDatabase.insertJournalDirect(entityId.toString(), "orphan-event|99", 1L, "cmd-1")
 
             TestDatabase.assertEventJournalCount(1L)
             TestDatabase.assertEventOutboxCount(0L)
@@ -145,14 +146,14 @@ class RelationalAggregateRepositoryTest {
             TestDatabase.assertEventOutboxCount(0L)
 
             // Original orphaned journal data intact
-            TestDatabase.assertEventJournalContains(entityId, "orphan-event|99", 1L, "cmd-1")
+            TestDatabase.assertEventJournalContains(entityId.toString(), "orphan-event|99", 1L, "cmd-1")
         }
 
     @Test
     fun `storeEvent should rollback when conflicting with an orphan outbox`() =
         runTest {
             // Given
-            val entityId = "test-entity-orphan-outbox"
+            val entityId = AggregateKey("test-entity-orphan-outbox", "test-entity")
             TestDatabase.insertUnclaimedOutboxDirect("$entityId|1", "orphan-event|99")
 
             TestDatabase.assertEventJournalCount(0L)
@@ -187,7 +188,7 @@ class RelationalAggregateRepositoryTest {
     fun `loadEvents should return empty flow when no events exist`() =
         runTest {
             // Given nothing inserted
-            val entityId = "non-existent"
+            val entityId = AggregateKey("non-existent", "test-entity")
 
             // When
             val events = repository.loadEvents(entityId, 1L).toList()
@@ -201,9 +202,9 @@ class RelationalAggregateRepositoryTest {
     fun `loadEvents should return events ordered by sequence number`() =
         runTest {
             // Given
-            val entityId = "test-entity-2"
+            val entityId = AggregateKey("test-entity-2", "test-entity")
             (1L..3L).forEach {
-                TestDatabase.insertJournalDirect(entityId, "event-$it|$it", it, "cmd-$it")
+                TestDatabase.insertJournalDirect(entityId.toString(), "event-$it|$it", it, "cmd-$it")
             }
 
             // When
@@ -222,9 +223,9 @@ class RelationalAggregateRepositoryTest {
     @Test
     fun `loadEvents should filter by fromSequenceNumber`() =
         runTest {
-            val entityId = "test-entity"
+            val entityId = AggregateKey("test-entity", "test-entity")
             (1L..3L).forEach {
-                TestDatabase.insertJournalDirect(entityId, "event-$it|$it", it, "cmd-$it")
+                TestDatabase.insertJournalDirect(entityId.toString(), "event-$it|$it", it, "cmd-$it")
             }
 
             // Should only return events 2 and 3
@@ -239,7 +240,7 @@ class RelationalAggregateRepositoryTest {
     fun `storeEvent should persist multiple events for same entity`() =
         runTest {
             // Given
-            val entityId = "test-entity-5"
+            val entityId = AggregateKey("test-entity-5", "test-entity")
 
             // When
             repository.storeEvent(
@@ -273,7 +274,7 @@ class RelationalAggregateRepositoryTest {
             // Then
             TestDatabase.assertEventJournalCount(3L)
             (1L..3L).forEach {
-                TestDatabase.assertEventJournalContains(entityId, "event-$it|$it", it, "cmd-$it")
+                TestDatabase.assertEventJournalContains(entityId.toString(), "event-$it|$it", it, "cmd-$it")
             }
         }
 
@@ -281,7 +282,7 @@ class RelationalAggregateRepositoryTest {
     fun `loadLatestSnapshot should return null when no snapshot exists`() =
         runTest {
             // Given
-            val entityId = "non-existent"
+            val entityId = AggregateKey("non-existent", "test-entity")
 
             // When
             val snapshot = repository.loadLatestSnapshot(entityId)
@@ -294,10 +295,10 @@ class RelationalAggregateRepositoryTest {
     @Test
     fun `loadLatestSnapshot should return latest snapshot`() =
         runTest {
-            val entityId = "test-entity"
-            TestDatabase.insertSnapshotDirect(entityId, "status-1|1", 1L)
-            TestDatabase.insertSnapshotDirect(entityId, "status-5|5", 5L)
-            TestDatabase.insertSnapshotDirect(entityId, "status-3|3", 3L)
+            val entityId = AggregateKey("test-entity", "test-entity")
+            TestDatabase.insertSnapshotDirect(entityId.toString(), "status-1|1", 1L)
+            TestDatabase.insertSnapshotDirect(entityId.toString(), "status-5|5", 5L)
+            TestDatabase.insertSnapshotDirect(entityId.toString(), "status-3|3", 3L)
 
             val snapshot = repository.loadLatestSnapshot(entityId)
 

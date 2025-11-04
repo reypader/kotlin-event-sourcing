@@ -6,30 +6,31 @@ import com.rmpader.eventsourcing.repository.EventSourcingRepositoryException
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
-class CoordinatedAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
+class CoordinatedAggregateManager<C, E, S : AggregateState<C, E, S>>(
     private val coordinator: AggregateCoordinator,
-    private val commandTransport: CommandTransport<C, S>,
+    private val commandTransport: CommandTransport,
     private val localDelegate: AggregateManager<C, E, S>,
+    private val commandSerializer: Serializer<C>,
+    private val stateDeserializer: Serializer<S>,
     private val localFallbackCondition: (Exception) -> Boolean = { false },
 ) : AggregateManager<C, E, S> {
     override suspend fun acceptCommand(
-        entityId: String,
+        aggregateKey: AggregateKey,
         commandId: String,
         command: C,
     ): S {
         try {
-            return when (val location = coordinator.locateAggregate(entityId)) {
+            return when (val location = coordinator.locateAggregate(aggregateKey)) {
                 is AggregateCoordinator.AggregateLocation.Local -> {
                     logger.info("Executing command locally: $commandId")
-                    executeLocally(entityId, commandId, command)
+                    executeLocally(aggregateKey, commandId, command)
                 }
 
                 is AggregateCoordinator.AggregateLocation.Remote -> {
                     logger.info("Executing command remotely to ${location.nodeId}: $commandId")
-
                     executeRemotely(
                         location.nodeId,
-                        entityId,
+                        aggregateKey,
                         commandId,
                         command,
                     )
@@ -50,21 +51,24 @@ class CoordinatedAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
 
     suspend fun executeRemotely(
         nodeId: String,
-        entityId: String,
+        aggregateKey: AggregateKey,
         commandId: String,
         command: C,
     ): S {
         try {
-            return commandTransport.sendToNode(
-                nodeId,
-                entityId,
-                commandId,
-                command,
-            )
+            val requestData = commandSerializer.serialize(command)
+            val responseData =
+                commandTransport.sendToNode(
+                    nodeId,
+                    aggregateKey,
+                    commandId,
+                    requestData,
+                )
+            return stateDeserializer.deserialize(responseData)
         } catch (e: Exception) {
             if (localFallbackCondition(e)) {
                 logger.info("Falling back to local processing...")
-                return executeLocally(entityId, commandId, command)
+                return executeLocally(aggregateKey, commandId, command)
             } else {
                 when (e) {
                     is CommandRejectionException -> throw e
@@ -79,12 +83,12 @@ class CoordinatedAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
     }
 
     suspend fun executeLocally(
-        entityId: String,
+        aggregateKey: AggregateKey,
         commandId: String,
         command: C,
     ): S {
         try {
-            return localDelegate.acceptCommand(entityId, commandId, command)
+            return localDelegate.acceptCommand(aggregateKey, commandId, command)
         } catch (e: EventSourcingRepositoryException) {
             throw e
         } catch (e: CommandRejectionException) {

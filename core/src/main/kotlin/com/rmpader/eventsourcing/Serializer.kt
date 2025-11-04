@@ -1,7 +1,7 @@
 package com.rmpader.eventsourcing
 
-interface Serializer<E> {
-    fun serialize(data: E): String
+interface Serializer<T> {
+    fun serialize(data: T): ByteArray
 
-    fun deserialize(data: String): E
+    fun deserialize(data: ByteArray): T
 }

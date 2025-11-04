@@ -5,6 +5,7 @@ import aws.sdk.kotlin.services.dynamodb.model.AttributeValue
 import aws.sdk.kotlin.services.dynamodb.model.DeleteItemRequest
 import aws.sdk.kotlin.services.dynamodb.model.PutItemRequest
 import aws.sdk.kotlin.services.dynamodb.model.ScanRequest
+import com.rmpader.eventsourcing.AggregateKey
 import com.rmpader.eventsourcing.coordination.AggregateCoordinator
 import com.rmpader.eventsourcing.coordination.AggregateCoordinator.AggregateLocation
 import kotlinx.coroutines.CoroutineScope
@@ -116,20 +117,20 @@ class DynamoDbAggregateCoordinator private constructor(
         }
     }
 
-    override fun locateAggregate(aggregateId: String): AggregateLocation {
+    override fun locateAggregate(aggregateKey: AggregateKey): AggregateLocation {
         val members = clusterMembers.value
-        logger.info("Locating aggregate $aggregateId amongst ${members.size} members...")
+        logger.info("Locating aggregate $aggregateKey amongst ${members.size} members...")
 
         val targetNode =
             members.maxByOrNull { member ->
-                hash("$aggregateId:$member")
+                hash("$aggregateKey:$member")
             }
 
         return if (targetNode == null || targetNode == nodeId) {
-            logger.debug("Aggregate $aggregateId is local")
+            logger.debug("Aggregate $aggregateKey is local")
             AggregateLocation.Local
         } else {
-            logger.debug("Aggregate $aggregateId is located remotely: $targetNode")
+            logger.debug("Aggregate $aggregateKey is located remotely: $targetNode")
             AggregateLocation.Remote(targetNode)
         }
     }

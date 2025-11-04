@@ -1,11 +1,12 @@
 package com.rmpader.eventsourcing.repository
 
+import com.rmpader.eventsourcing.AggregateKey
 import kotlinx.coroutines.flow.Flow
 import java.time.OffsetDateTime
 
 interface AggregateRepository<E, S> {
     data class EventRecord<E>(
-        val entityId: String,
+        val aggregateKey: AggregateKey,
         val event: E,
         val sequenceNumber: Long,
         val timestamp: OffsetDateTime,
@@ -18,18 +19,18 @@ interface AggregateRepository<E, S> {
     )
 
     data class SnapshotRecord<S>(
-        val entityId: String,
+        val aggregateKey: AggregateKey,
         val state: S,
         val sequenceNumber: Long,
         val timestamp: OffsetDateTime,
     )
 
     fun loadEvents(
-        entityId: String,
+        aggregateKey: AggregateKey,
         fromSequenceNumber: Long,
     ): Flow<EventRecord<E>>
 
-    suspend fun loadLatestSnapshot(entityId: String): SnapshotRecord<S>?
+    suspend fun loadLatestSnapshot(aggregateKey: AggregateKey): SnapshotRecord<S>?
 
     suspend fun storeEvent(eventRecord: EventRecord<E>)
 

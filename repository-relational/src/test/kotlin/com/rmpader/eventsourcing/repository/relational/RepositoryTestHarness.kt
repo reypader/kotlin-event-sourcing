@@ -13,19 +13,19 @@ data class TestState(
 )
 
 class TestSerializer : Serializer<TestEvent> {
-    override fun serialize(data: TestEvent): String = "${data.name}|${data.value}"
+    override fun serialize(data: TestEvent): ByteArray = "${data.name}|${data.value}".toByteArray()
 
-    override fun deserialize(data: String): TestEvent {
-        val parts = data.split("|")
+    override fun deserialize(data: ByteArray): TestEvent {
+        val parts = String(data).split("|")
         return TestEvent(parts[0], parts[1].toInt())
     }
 }
 
 class TestStateSerializer : Serializer<TestState> {
-    override fun serialize(data: TestState): String = "${data.status}|${data.count}"
+    override fun serialize(data: TestState): ByteArray = "${data.status}|${data.count}".toByteArray()
 
-    override fun deserialize(data: String): TestState {
-        val parts = data.split("|")
+    override fun deserialize(data: ByteArray): TestState {
+        val parts = String(data).split("|")
         return TestState(parts[0], parts[1].toInt())
     }
 }

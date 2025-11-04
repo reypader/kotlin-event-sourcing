@@ -8,11 +8,11 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.time.OffsetDateTime
 
-class DefaultAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
+class DefaultAggregateManager<C, E, S : AggregateState<C, E, S>>(
     val repository: AggregateRepository<E, S>,
-    val aggregateInitializer: (String) -> S,
+    val aggregateInitializer: (AggregateKey) -> S,
 ) : AggregateManager<C, E, S> {
-    private sealed class ReplayResult<out S> {
+    private sealed class ReplayResult<S> {
         data class CommandAlreadyProcessed<S>(
             val state: S,
             val atSequenceNumber: Long,
@@ -25,15 +25,15 @@ class DefaultAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
     }
 
     override suspend fun acceptCommand(
-        entityId: String,
+        aggregateKey: AggregateKey,
         commandId: String,
         command: C,
     ): S {
         try {
-            val snapshotRecord = repository.loadLatestSnapshot(entityId)
-            val currentState = snapshotRecord?.state ?: aggregateInitializer(entityId)
+            val snapshotRecord = repository.loadLatestSnapshot(aggregateKey)
+            val currentState = snapshotRecord?.state ?: aggregateInitializer(aggregateKey)
             val currentSequence = snapshotRecord?.sequenceNumber ?: 0
-            val events = repository.loadEvents(entityId, currentSequence + 1)
+            val events = repository.loadEvents(aggregateKey, currentSequence + 1)
 
             return when (val result = replayEventsWithIdempotency(currentState, currentSequence, commandId, events)) {
                 is ReplayResult.CommandAlreadyProcessed -> {
@@ -44,10 +44,10 @@ class DefaultAggregateManager<C, E, S : AggregateEntity<C, E, S>>(
                 is ReplayResult.ReadyForNewCommand -> {
                     val finalState = result.state
                     val resultingEvent = finalState.handleCommand(command)
-                    logger.info("Persisting event $resultingEvent for entity $entityId at sequence ${result.nextSequence}")
+                    logger.info("Persisting event $resultingEvent for entity $aggregateKey at sequence ${result.nextSequence}")
                     repository.storeEvent(
                         AggregateRepository.EventRecord(
-                            entityId,
+                            aggregateKey,
                             resultingEvent,
                             result.nextSequence,
                             OffsetDateTime.now(),

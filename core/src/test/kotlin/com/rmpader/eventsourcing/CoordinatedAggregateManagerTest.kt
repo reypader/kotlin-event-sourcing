@@ -18,15 +18,21 @@ import kotlin.test.assertIs
 
 class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
     private val coordinator = mockk<AggregateCoordinator>()
-    private val transport = mockk<CommandTransport<TestCommand, TestState>>()
+    private val transport = mockk<CommandTransport>()
     private val localDelegate = mockk<AggregateManager<TestCommand, TestEvent, TestState>>()
+    private val commandSerializer = mockk<Serializer<TestCommand>>()
+    private val stateDeserializer = mockk<Serializer<TestState>>()
 
     private val manager =
         CoordinatedAggregateManager(
             coordinator = coordinator,
             commandTransport = transport,
             localDelegate = localDelegate,
+            commandSerializer = commandSerializer,
+            stateDeserializer = stateDeserializer,
         )
+
+    private fun keyOf(id: String): AggregateKey = AggregateKey(id, "order")
 
     @AfterEach
     fun cleanup() {
@@ -38,20 +44,26 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
         runTest {
             // Given: Coordinator says aggregate is local
             val testCommand = TestCommand.CreateOrder(100)
-            every { coordinator.locateAggregate("order-1") } returns AggregateLocation.Local
-            coEvery { localDelegate.acceptCommand("order-1", "cmd-1", testCommand) } returns TestState("order-1")
+            every { coordinator.locateAggregate(keyOf("order-1")) } returns AggregateLocation.Local
+            coEvery {
+                localDelegate.acceptCommand(
+                    keyOf("order-1"),
+                    "cmd-1",
+                    testCommand,
+                )
+            } returns TestState(keyOf("order-1"))
 
             // When: Accept command
-            val result = manager.acceptCommand("order-1", "cmd-1", testCommand)
+            val result = manager.acceptCommand(keyOf("order-1"), "cmd-1", testCommand)
 
             // Then: Local delegate called
             coVerify(exactly = 1) {
-                localDelegate.acceptCommand("order-1", "cmd-1", TestCommand.CreateOrder(100))
+                localDelegate.acceptCommand(keyOf("order-1"), "cmd-1", testCommand)
             }
 
             // And: Transport not called
             coVerify(exactly = 0) { transport.sendToNode(any(), any(), any(), any()) }
-            assertEquals(TestState("order-1"), result)
+            assertEquals(TestState(keyOf("order-1")), result)
         }
 
     @Test
@@ -59,22 +71,40 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
         runTest {
             // Given: Coordinator says aggregate is on remote node
             val testCommand = TestCommand.CreateOrder(100)
-
-            every { coordinator.locateAggregate("order-1") } returns
+            val testState = TestState(keyOf("order-1"))
+            every { commandSerializer.serialize(testCommand) } returns testCommand.toString().toByteArray()
+            every {
+                stateDeserializer.deserialize(
+                    testState.toString().toByteArray(),
+                )
+            } returns testState
+            every { coordinator.locateAggregate(keyOf("order-1")) } returns
                 AggregateLocation.Remote("node-2")
-            coEvery { transport.sendToNode("node-2", "order-1", "cmd-1", testCommand) } returns TestState("order-1")
+            coEvery {
+                transport.sendToNode(
+                    "node-2",
+                    keyOf("order-1"),
+                    "cmd-1",
+                    testCommand.toString().toByteArray(),
+                )
+            } returns testState.toString().toByteArray()
 
             // When: Accept command
-            val result = manager.acceptCommand("order-1", "cmd-1", TestCommand.CreateOrder(100))
+            val result = manager.acceptCommand(keyOf("order-1"), "cmd-1", testCommand)
 
             // Then: Transport called with correct parameters
             coVerify(exactly = 1) {
-                transport.sendToNode("node-2", "order-1", "cmd-1", TestCommand.CreateOrder(100))
+                transport.sendToNode(
+                    "node-2",
+                    keyOf("order-1"),
+                    "cmd-1",
+                    testCommand.toString().toByteArray(),
+                )
             }
 
             // And: Local delegate not called
             coVerify(exactly = 0) { localDelegate.acceptCommand(any(), any(), any()) }
-            assertEquals(TestState("order-1"), result)
+            assertEquals(testState, result)
         }
 
     @Test
@@ -87,7 +117,7 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
             // When/Then: Exception propagated without wrapping
             val exception =
                 assertThrows<EventSourcingRepositoryException> {
-                    manager.executeLocally("order-1", "cmd-1", TestCommand.CreateOrder(100))
+                    manager.executeLocally(keyOf("order-1"), "cmd-1", TestCommand.CreateOrder(100))
                 }
 
             assertEquals(repoException, exception)
@@ -107,7 +137,7 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
             // When/Then: Exception propagated without wrapping
             val exception =
                 assertThrows<CommandRejectionException> {
-                    manager.executeLocally("order-1", "cmd-1", TestCommand.CreateOrder(100))
+                    manager.executeLocally(keyOf("order-1"), "cmd-1", TestCommand.CreateOrder(100))
                 }
 
             assertEquals("DUPLICATE_ORDER", exception.errorCode)
@@ -123,7 +153,7 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
             // When/Then: Wrapped in CommandRejectionException
             val exception =
                 assertThrows<CommandRejectionException> {
-                    manager.executeLocally("order-1", "cmd-1", TestCommand.CreateOrder(100))
+                    manager.executeLocally(keyOf("order-1"), "cmd-1", TestCommand.CreateOrder(100))
                 }
 
             assertEquals("LOCAL_EXECUTION_ERROR", exception.errorCode)
@@ -134,14 +164,14 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
     fun `acceptCommand - local - repository exception propagated`() =
         runTest {
             // Given: Local aggregate with repository failure
-            every { coordinator.locateAggregate("order-1") } returns AggregateLocation.Local
+            every { coordinator.locateAggregate(keyOf("order-1")) } returns AggregateLocation.Local
             val repoException = EventSourcingRepositoryException(RuntimeException("DB error"))
             coEvery { localDelegate.acceptCommand(any(), any(), any()) } throws repoException
 
             // When/Then: Repository exception propagates (for retry logic in DefaultAggregateManager)
             val exception =
                 assertThrows<EventSourcingRepositoryException> {
-                    manager.acceptCommand("order-1", "cmd-1", TestCommand.CreateOrder(100))
+                    manager.acceptCommand(keyOf("order-1"), "cmd-1", TestCommand.CreateOrder(100))
                 }
 
             assertEquals(repoException, exception)
@@ -151,7 +181,7 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
     fun `acceptCommand - remote - transport exception wrapped`() =
         runTest {
             // Given: Remote aggregate with transport failure
-            every { coordinator.locateAggregate("order-1") } returns
+            every { coordinator.locateAggregate(keyOf("order-1")) } returns
                 AggregateLocation.Remote("node-2")
             coEvery { transport.sendToNode(any(), any(), any(), any()) } throws
                 RuntimeException("Network timeout")
@@ -159,7 +189,7 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
             // When/Then: Wrapped in CommandRejectionException
             val exception =
                 assertThrows<CommandRejectionException> {
-                    manager.acceptCommand("order-1", "cmd-1", TestCommand.CreateOrder(100))
+                    manager.acceptCommand(keyOf("order-1"), "cmd-1", TestCommand.CreateOrder(100))
                 }
 
             assertEquals("REMOTE_EXECUTION_ERROR", exception.errorCode)
@@ -170,8 +200,10 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
     fun `acceptCommand - remote - CommandRejectionException from transport propagated`() =
         runTest {
             // Given: Remote node rejects command
-            every { coordinator.locateAggregate("order-1") } returns
+            every { coordinator.locateAggregate(keyOf("order-1")) } returns
                 AggregateLocation.Remote("node-2")
+            every { commandSerializer.serialize(any()) } returns "doesn't matter".toByteArray()
+
             val remoteRejection =
                 CommandRejectionException(
                     reason = "Insufficient stock",
@@ -182,7 +214,7 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
             // When/Then: Remote rejection propagated as-is
             val exception =
                 assertThrows<CommandRejectionException> {
-                    manager.acceptCommand("order-1", "cmd-1", TestCommand.CreateOrder(100))
+                    manager.acceptCommand(keyOf("order-1"), "cmd-1", TestCommand.CreateOrder(100))
                 }
 
             assertEquals("OUT_OF_STOCK", exception.errorCode)
@@ -199,23 +231,32 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
                     commandTransport = transport,
                     localDelegate = localDelegate,
                     localFallbackCondition = { true },
+                    commandSerializer = commandSerializer,
+                    stateDeserializer = stateDeserializer,
                 )
             val testCommand = TestCommand.CreateOrder(100)
+            val testState = TestState(keyOf("order-1"))
             // Given: Remote aggregate with transport failure
-            every { coordinator.locateAggregate("order-1") } returns
+            every { coordinator.locateAggregate(keyOf("order-1")) } returns
                 AggregateLocation.Remote("node-2")
             coEvery { transport.sendToNode(any(), any(), any(), any()) } throws
                 RuntimeException("Network timeout")
-            coEvery { localDelegate.acceptCommand("order-1", "cmd-1", testCommand) } returns TestState("order-1")
+            coEvery {
+                localDelegate.acceptCommand(
+                    keyOf("order-1"),
+                    "cmd-1",
+                    testCommand,
+                )
+            } returns testState
 
             // When: Accept command
-            val result = manager.acceptCommand("order-1", "cmd-1", testCommand)
+            val result = manager.acceptCommand(keyOf("order-1"), "cmd-1", testCommand)
 
             // Then: Wrapped in CommandRejectionException
             coVerify(exactly = 1) {
-                localDelegate.acceptCommand("order-1", "cmd-1", testCommand)
+                localDelegate.acceptCommand(keyOf("order-1"), "cmd-1", testCommand)
             }
-            assertEquals(TestState("order-1"), result)
+            assertEquals(testState, result)
         }
 
     @Test
@@ -228,11 +269,13 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
                     commandTransport = transport,
                     localDelegate = localDelegate,
                     localFallbackCondition = { true },
+                    commandSerializer = commandSerializer,
+                    stateDeserializer = stateDeserializer,
                 )
             val testCommand = TestCommand.CreateOrder(100)
 
             // Given: Remote node rejects command
-            every { coordinator.locateAggregate("order-1") } returns
+            every { coordinator.locateAggregate(keyOf("order-1")) } returns
                 AggregateLocation.Remote("node-2")
             val remoteRejection =
                 CommandRejectionException(
@@ -242,7 +285,7 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
             coEvery { transport.sendToNode(any(), any(), any(), any()) } throws remoteRejection
             coEvery {
                 localDelegate.acceptCommand(
-                    "order-1",
+                    keyOf("order-1"),
                     "cmd-1",
                     testCommand,
                 )
@@ -251,11 +294,11 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
             // When/Then: Remote rejection propagated as-is
             val exception =
                 assertThrows<CommandRejectionException> {
-                    manager.acceptCommand("order-1", "cmd-1", TestCommand.CreateOrder(100))
+                    manager.acceptCommand(keyOf("order-1"), "cmd-1", TestCommand.CreateOrder(100))
                 }
 
             coVerify(exactly = 1) {
-                localDelegate.acceptCommand("order-1", "cmd-1", testCommand)
+                localDelegate.acceptCommand(keyOf("order-1"), "cmd-1", testCommand)
             }
 
             assertEquals("LOCAL_EXECUTION_ERROR", exception.errorCode)
@@ -265,13 +308,13 @@ class CoordinatedAggregateManagerTest : AggregateManagerBaseClass() {
     fun `coordinator exception wrapped`() =
         runTest {
             // Given: Coordinator throws unexpected exception
-            every { coordinator.locateAggregate("order-1") } throws
+            every { coordinator.locateAggregate(keyOf("order-1")) } throws
                 IllegalStateException("Coordinator not initialized")
 
             // When/Then: Wrapped in CommandRejectionException
             val exception =
                 assertThrows<CommandRejectionException> {
-                    manager.acceptCommand("order-1", "cmd-1", TestCommand.CreateOrder(100))
+                    manager.acceptCommand(keyOf("order-1"), "cmd-1", TestCommand.CreateOrder(100))
                 }
 
             assertEquals("REMOTE_EXECUTION_ERROR", exception.errorCode)

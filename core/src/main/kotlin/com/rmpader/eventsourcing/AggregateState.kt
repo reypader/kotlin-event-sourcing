@@ -1,7 +1,7 @@
 package com.rmpader.eventsourcing
 
-interface AggregateEntity<C, E, S : AggregateEntity<C, E, S>> {
-    val entityId: String
+interface AggregateState<C, E, S : AggregateState<C, E, S>> {
+    val key: AggregateKey
 
     fun handleCommand(command: C): E
 

@@ -1,8 +1,8 @@
 package com.rmpader.eventsourcing
 
-interface AggregateManager<C, E, S : AggregateEntity<C, E, S>> {
+interface AggregateManager<C, E, S : AggregateState<C, E, S>> {
     suspend fun acceptCommand(
-        entityId: String,
+        aggregateKey: AggregateKey,
         commandId: String,
         command: C,
     ): S

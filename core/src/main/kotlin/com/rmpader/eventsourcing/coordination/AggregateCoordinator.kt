@@ -1,5 +1,7 @@
 package com.rmpader.eventsourcing.coordination
 
+import com.rmpader.eventsourcing.AggregateKey
+
 interface AggregateCoordinator {
     sealed class AggregateLocation {
         data object Local : AggregateLocation()
@@ -30,7 +32,7 @@ interface AggregateCoordinator {
 
     fun stop()
 
-    fun locateAggregate(aggregateId: String): AggregateLocation
+    fun locateAggregate(aggregateKey: AggregateKey): AggregateLocation
 
     fun checkHealth(): HealthStatus
 }

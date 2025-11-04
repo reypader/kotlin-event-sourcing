@@ -1,10 +1,12 @@
 package com.rmpader.eventsourcing.coordination
 
-interface CommandTransport<C, S> {
+import com.rmpader.eventsourcing.AggregateKey
+
+interface CommandTransport {
     suspend fun sendToNode(
         nodeId: String,
-        entityId: String,
+        aggregateKey: AggregateKey,
         commandId: String,
-        command: C,
-    ): S
+        commandData: ByteArray,
+    ): ByteArray
 }

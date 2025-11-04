@@ -1,5 +1,6 @@
 package com.rmpader.eventsourcing.repository.relational
 
+import com.rmpader.eventsourcing.AggregateKey
 import com.rmpader.eventsourcing.Serializer
 import com.rmpader.eventsourcing.repository.AggregateRepository
 import com.rmpader.eventsourcing.repository.EventSourcingRepositoryException
@@ -22,7 +23,7 @@ class RelationalAggregateRepository<E, S>(
     val stateSerializer: Serializer<S>,
 ) : AggregateRepository<E, S> {
     override fun loadEvents(
-        entityId: String,
+        aggregateKey: AggregateKey,
         fromSequenceNumber: Long,
     ): Flow<AggregateRepository.EventRecord<E>> {
         try {
@@ -40,16 +41,16 @@ class RelationalAggregateRepository<E, S>(
                         WHERE ENTITY_ID = $1 AND SEQUENCE_NUMBER >= $2
                         ORDER BY SEQUENCE_NUMBER ASC
                         """,
-                                    ).bind(0, entityId)
+                                    ).bind(0, aggregateKey.toString())
                                     .bind(1, fromSequenceNumber)
                                     .execute(),
                             ).flatMap { result ->
                                 result.map { row, _ ->
                                     AggregateRepository.EventRecord(
-                                        entityId = row.get("ENTITY_ID", String::class.java)!!,
+                                        aggregateKey = AggregateKey.from(row.get("ENTITY_ID", String::class.java)!!),
                                         event =
                                             serializer.deserialize(
-                                                row.get("EVENT_DATA", String::class.java)!!,
+                                                row.get("EVENT_DATA", String::class.java)!!.toByteArray(),
                                             ),
                                         sequenceNumber = row.get("SEQUENCE_NUMBER", Number::class.java)!!.toLong(),
                                         timestamp =
@@ -70,7 +71,7 @@ class RelationalAggregateRepository<E, S>(
         }
     }
 
-    override suspend fun loadLatestSnapshot(entityId: String): AggregateRepository.SnapshotRecord<S>? {
+    override suspend fun loadLatestSnapshot(aggregateKey: AggregateKey): AggregateRepository.SnapshotRecord<S>? {
         try {
             return Mono
                 .usingWhen(
@@ -86,16 +87,22 @@ class RelationalAggregateRepository<E, S>(
                         WHERE ENTITY_ID = $1
                         ORDER BY SEQUENCE_NUMBER DESC LIMIT 1
                         """,
-                                    ).bind(0, entityId)
+                                    ).bind(0, aggregateKey.toString())
                                     .execute(),
                             ).flatMap { result ->
                                 Mono.from(
                                     result.map { row, _ ->
                                         AggregateRepository.SnapshotRecord(
-                                            entityId = row.get("ENTITY_ID", String::class.java)!!,
+                                            aggregateKey =
+                                                AggregateKey.from(
+                                                    row.get(
+                                                        "ENTITY_ID",
+                                                        String::class.java,
+                                                    )!!,
+                                                ),
                                             state =
                                                 stateSerializer.deserialize(
-                                                    row.get("STATE_DATA", String::class.java)!!,
+                                                    row.get("STATE_DATA", String::class.java)!!.toByteArray(),
                                                 ),
                                             sequenceNumber = row.get("SEQUENCE_NUMBER", Number::class.java)!!.toLong(),
                                             timestamp =
@@ -255,7 +262,7 @@ class RelationalAggregateRepository<E, S>(
                         eventId = row.get("EVENT_ID", String::class.java)!!,
                         event =
                             serializer.deserialize(
-                                row.get("EVENT_DATA", String::class.java)!!,
+                                row.get("EVENT_DATA", String::class.java)!!.toByteArray(),
                             ),
                     )
                 }
@@ -316,7 +323,7 @@ class RelationalAggregateRepository<E, S>(
                             (EVENT_ID, EVENT_DATA)
                             VALUES ($1, $2)
                         """,
-                ).bind(0, "${eventRecord.entityId}|${eventRecord.sequenceNumber}")
+                ).bind(0, "${eventRecord.aggregateKey}|${eventRecord.sequenceNumber}")
                 .bind(1, serializer.serialize(eventRecord.event))
                 .execute(),
         )
@@ -333,7 +340,7 @@ class RelationalAggregateRepository<E, S>(
                             (ENTITY_ID, SEQUENCE_NUMBER, EVENT_DATA, ORIGIN_COMMAND_ID)
                             VALUES ($1, $2, $3, $4)
                         """,
-                ).bind(0, eventRecord.entityId)
+                ).bind(0, eventRecord.aggregateKey.toString())
                 .bind(1, eventRecord.sequenceNumber)
                 .bind(2, serializer.serialize(eventRecord.event))
                 .bind(3, eventRecord.originCommandId)

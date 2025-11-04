@@ -20,9 +20,9 @@ open class AggregateManagerBaseClass {
     }
 
     data class TestState(
-        override val entityId: String,
+        override val key: AggregateKey,
         val amount: Int = 0,
-    ) : AggregateEntity<TestCommand, TestEvent, TestState> {
+    ) : AggregateState<TestCommand, TestEvent, TestState> {
         override fun handleCommand(command: TestCommand): TestEvent =
             when (command) {
                 is TestCommand.CreateOrder ->

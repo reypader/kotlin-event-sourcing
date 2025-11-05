@@ -9,14 +9,15 @@ import io.r2dbc.spi.Connection
 import io.r2dbc.spi.ConnectionFactory
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flatMapConcat
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.fold
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.single
-import kotlinx.coroutines.flow.singleOrNull
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.reactive.awaitFirstOrNull
+import kotlinx.coroutines.reactive.awaitSingle
 import org.slf4j.LoggerFactory
 import java.time.LocalDateTime
 import java.time.ZoneOffset
@@ -28,32 +29,56 @@ class RelationalAggregateRepository<E, S>(
     val serializer: Serializer<E>,
     val stateSerializer: Serializer<S>,
 ) : AggregateRepository<E, S> {
+    private suspend inline fun <R> useConnection(crossinline block: suspend (Connection) -> R): R {
+        try {
+            val connection = connectionFactory.create().awaitSingle()
+            try {
+                return block(connection)
+            } finally {
+                connection.close().awaitFirstOrNull()
+            }
+        } catch (ex: EventSourcingRepositoryException) {
+            throw ex
+        } catch (ex: Exception) {
+            throw EventSourcingRepositoryException(ex)
+        }
+    }
+
+    private inline fun <R> flowConnection(crossinline block: suspend (Connection) -> Flow<R>) =
+        flow {
+            val connection = connectionFactory.create().awaitSingle()
+            block(connection)
+                .onCompletion { cause ->
+                    connection.close().awaitFirstOrNull()
+                    if (cause != null) {
+                        logger.error("Error while using connection to generate flow", cause)
+                    }
+                }.collect { emit(it) }
+        }.catch { e ->
+            throw EventSourcingRepositoryException(e)
+        }
+
     override fun loadEvents(
         aggregateKey: AggregateKey,
         fromSequenceNumber: Long,
-    ): Flow<AggregateRepository.EventRecord<E>> {
-        try {
-            return connectionFactory
-                .create()
-                .asFlow()
-                .flatMapConcat {
-                    it
-                        .createStatement(
-                            """
+    ): Flow<AggregateRepository.EventRecord<E>> =
+        flowConnection {
+            it
+                .createStatement(
+                    """
                         SELECT ENTITY_ID, EVENT_DATA, SEQUENCE_NUMBER, TIMESTAMP, ORIGIN_COMMAND_ID
                         FROM EVENT_JOURNAL
                         WHERE ENTITY_ID = $1 AND SEQUENCE_NUMBER >= $2
                         ORDER BY SEQUENCE_NUMBER ASC
                         """,
-                        ).bind("$1", aggregateKey.toString())
-                        .bind("$2", fromSequenceNumber)
-                        .execute()
+                ).bind("$1", aggregateKey.toString())
+                .bind("$2", fromSequenceNumber)
+                .execute()
+                .asFlow()
+                .flatMapConcat { result ->
+                    result
+                        .map { row, _ -> row }
                         .asFlow()
-                }.flatMapConcat {
-                    it
-                        .map { row, _ ->
-                            row
-                        }.asFlow()
                         .map { row ->
                             AggregateRepository.EventRecord(
                                 aggregateKey = AggregateKey.from(row.get("ENTITY_ID", String::class.java)!!),
@@ -70,102 +95,80 @@ class RelationalAggregateRepository<E, S>(
                             )
                         }
                 }
-        } catch (ex: Exception) {
-            throw EventSourcingRepositoryException(ex)
         }
-    }
 
-    override suspend fun loadLatestSnapshot(aggregateKey: AggregateKey): AggregateRepository.SnapshotRecord<S>? {
-        try {
-            return connectionFactory
-                .create()
-                .asFlow()
-                .flatMapConcat {
-                    it
-                        .createStatement(
-                            """
+    override suspend fun loadLatestSnapshot(aggregateKey: AggregateKey): AggregateRepository.SnapshotRecord<S>? =
+        useConnection {
+            val result =
+                it
+                    .createStatement(
+                        """
                         SELECT ENTITY_ID, SEQUENCE_NUMBER, STATE_DATA, TIMESTAMP
                         FROM SNAPSHOTS
                         WHERE ENTITY_ID = $1
                         ORDER BY SEQUENCE_NUMBER DESC LIMIT 1
                         """,
-                        ).bind("$1", aggregateKey.toString())
-                        .execute()
-                        .asFlow()
-                }.flatMapConcat {
-                    it
-                        .map { row, _ ->
-                            row
-                        }.asFlow()
-                        .map { row ->
-                            AggregateRepository.SnapshotRecord(
-                                aggregateKey =
-                                    AggregateKey.from(
-                                        row.get(
-                                            "ENTITY_ID",
-                                            String::class.java,
-                                        )!!,
-                                    ),
-                                state =
-                                    stateSerializer.deserialize(
-                                        row.get("STATE_DATA", Blob::class.java)!!.toByteArray(),
-                                    ),
-                                sequenceNumber = row.get("SEQUENCE_NUMBER", Number::class.java)!!.toLong(),
-                                timestamp =
-                                    row
-                                        .get("TIMESTAMP", LocalDateTime::class.java)!!
-                                        .atOffset(ZoneOffset.UTC),
-                            )
-                        }
-                }.singleOrNull()
-        } catch (ex: Exception) {
-            throw EventSourcingRepositoryException(ex)
-        }
-    }
+                    ).bind("$1", aggregateKey.toString())
+                    .execute()
+                    .awaitSingle()
+                    .map { row, _ -> row }
+                    .awaitFirstOrNull()
 
-    override suspend fun storeEvent(eventRecord: AggregateRepository.EventRecord<E>) {
-        try {
-            connectionFactory
-                .create()
-                .asFlow()
-                .onEach { it.beginTransaction().awaitFirstOrNull() }
-                .onEach { persistEventStore(it, eventRecord) }
-                .onEach { persistOutbox(it, eventRecord) }
-                .single()
-                .commitTransaction()
-                .awaitFirstOrNull()
-        } catch (ex: EventSourcingRepositoryException) {
-            throw ex
-        } catch (e: Exception) {
-            throw EventSourcingRepositoryException(e)
+            result?.let { row ->
+                AggregateRepository.SnapshotRecord(
+                    aggregateKey =
+                        AggregateKey.from(
+                            row.get(
+                                "ENTITY_ID",
+                                String::class.java,
+                            )!!,
+                        ),
+                    state =
+                        stateSerializer.deserialize(
+                            row.get("STATE_DATA", Blob::class.java)!!.toByteArray(),
+                        ),
+                    sequenceNumber = row.get("SEQUENCE_NUMBER", Number::class.java)!!.toLong(),
+                    timestamp =
+                        row
+                            .get("TIMESTAMP", LocalDateTime::class.java)!!
+                            .atOffset(ZoneOffset.UTC),
+                )
+            }
         }
-    }
+
+    override suspend fun storeEvent(eventRecord: AggregateRepository.EventRecord<E>) =
+        useConnection {
+            try {
+                it.beginTransaction().awaitFirstOrNull()
+                persistEventStore(it, eventRecord)
+                persistOutbox(it, eventRecord)
+                it.commitTransaction().awaitFirstOrNull()
+                return@useConnection
+            } catch (ex: Exception) {
+                it.rollbackTransaction().awaitFirstOrNull()
+                throw EventSourcingRepositoryException(ex)
+            }
+        }
 
     private suspend fun persistOutbox(
         connection: Connection,
         eventRecord: AggregateRepository.EventRecord<E>,
     ) {
-        try {
-            val rowsAffected =
-                connection
-                    .createStatement(
-                        """
+        val result =
+            connection
+                .createStatement(
+                    """
                             INSERT INTO EVENT_OUTBOX 
                             (EVENT_ID, EVENT_DATA)
                             VALUES ($1, $2)
                         """,
-                    ).bind("$1", "${eventRecord.aggregateKey}|${eventRecord.sequenceNumber}")
-                    .bind("$2", serializer.serialize(eventRecord.event))
-                    .execute()
-                    .asFlow()
-                    .flatMapConcat { result -> result.rowsUpdated.asFlow() }
-                    .single()
-            if (rowsAffected != 1L) {
-                error("Expected 1 row affected in event_outbox, but got $rowsAffected")
-            }
-        } catch (ex: Exception) {
-            connection.rollbackTransaction().awaitFirstOrNull()
-            throw EventSourcingRepositoryException(ex)
+                ).bind("$1", "${eventRecord.aggregateKey}|${eventRecord.sequenceNumber}")
+                .bind("$2", serializer.serialize(eventRecord.event))
+                .execute()
+                .awaitSingle()
+        val rowsAffected = result.rowsUpdated.awaitSingle()
+        if (rowsAffected != 1L) {
+            error("Expected 1 row affected in event_outbox, but got $rowsAffected")
         }
     }
 
@@ -173,82 +176,55 @@ class RelationalAggregateRepository<E, S>(
         connection: Connection,
         eventRecord: AggregateRepository.EventRecord<E>,
     ) {
-        try {
-            val rowsAffected =
-                connection
-                    .createStatement(
-                        """
+        val result =
+            connection
+                .createStatement(
+                    """
                             INSERT INTO EVENT_JOURNAL 
                             (ENTITY_ID, SEQUENCE_NUMBER, EVENT_DATA, ORIGIN_COMMAND_ID)
                             VALUES ($1, $2, $3, $4)
                         """,
-                    ).bind("$1", eventRecord.aggregateKey.toString())
-                    .bind("$2", eventRecord.sequenceNumber)
-                    .bind("$3", serializer.serialize(eventRecord.event))
-                    .bind("$4", eventRecord.originCommandId)
-                    .execute()
-                    .asFlow()
-                    .flatMapConcat { result -> result.rowsUpdated.asFlow() }
-                    .single()
-            if (rowsAffected != 1L) {
-                error("Expected 1 row affected in event_journal, but got $rowsAffected")
-            }
-        } catch (ex: Exception) {
-            connection.rollbackTransaction().awaitFirstOrNull()
-            throw EventSourcingRepositoryException(ex)
+                ).bind("$1", eventRecord.aggregateKey.toString())
+                .bind("$2", eventRecord.sequenceNumber)
+                .bind("$3", serializer.serialize(eventRecord.event))
+                .bind("$4", eventRecord.originCommandId)
+                .execute()
+                .awaitSingle()
+        val rowsAffected = result.rowsUpdated.awaitSingle()
+        if (rowsAffected != 1L) {
+            error("Expected 1 row affected in event_journal, but got $rowsAffected")
         }
     }
 
-    override suspend fun deleteFromOutbox(eventIds: Set<String>) {
-        try {
-            if (eventIds.isEmpty()) return
-
-            val sql = """
+    override suspend fun deleteFromOutbox(eventIds: Set<String>) =
+        useConnection { connection ->
+            if (eventIds.isNotEmpty()) {
+                val sql = """
                         DELETE 
                         FROM EVENT_OUTBOX
                         WHERE EVENT_ID IN (${eventIds.indices.joinToString(",") { $$"$$${it + 1}" }})
                         """
-            val rowsAffected =
-                connectionFactory
-                    .create()
-                    .asFlow()
-                    .flatMapConcat {
-                        @Suppress("SqlSourceToSinkFlow")
-                        val statement = it.createStatement(sql)
-                        eventIds.forEachIndexed { index, id ->
-                            statement.bind(index, id)
-                        }
-                        statement
-                            .execute()
-                            .asFlow()
-                            .flatMapConcat { result -> result.rowsUpdated.asFlow() }
-                    }.single()
-            val expectedRows = eventIds.size.toLong()
-            if (rowsAffected != expectedRows) {
-                logger.warn("Expected $expectedRows rows deleted from event_outbox, but got $rowsAffected")
+
+                @Suppress("SqlSourceToSinkFlow")
+                val statement = connection.createStatement(sql)
+                eventIds.forEachIndexed { index, id ->
+                    statement.bind(index, id)
+                }
+                val result = statement.execute().awaitSingle()
+                val rowsAffected = result.rowsUpdated.awaitSingle()
+                val expectedRows = eventIds.size.toLong()
+                if (rowsAffected != expectedRows) {
+                    logger.warn("Expected $expectedRows rows deleted from event_outbox, but got $rowsAffected")
+                }
             }
-        } catch (e: Exception) {
-            throw EventSourcingRepositoryException(e)
         }
-    }
 
-    override suspend fun pollOutbox(limit: Long): Flow<AggregateRepository.OutboxRecord<E>> {
-        try {
+    override fun pollOutbox(limit: Long): Flow<AggregateRepository.OutboxRecord<E>> =
+        flowConnection {
             val claimId = UUID.randomUUID().toString()
-
-            return connectionFactory
-                .create()
-                .asFlow()
-                .onEach { it.beginTransaction().awaitFirstOrNull() }
-                .onEach { claimRecords(it, claimId, limit) }
-                .onEach { it.commitTransaction().awaitFirstOrNull() }
-                .flatMapConcat { extractRecords(it, claimId) }
-        } catch (ex: EventSourcingRepositoryException) {
-            throw ex
-        } catch (ex: Exception) {
-            throw EventSourcingRepositoryException(ex)
+            claimRecords(it, claimId, limit)
+            extractRecords(it, claimId)
         }
-    }
 
     private suspend fun claimRecords(
         connection: Connection,
@@ -256,7 +232,8 @@ class RelationalAggregateRepository<E, S>(
         limit: Long,
     ) {
         try {
-            val rowsAffected =
+            connection.beginTransaction().awaitFirstOrNull()
+            val result =
                 connection
                     .createStatement(
                         """
@@ -274,12 +251,12 @@ class RelationalAggregateRepository<E, S>(
                     ).bind("$1", claimId)
                     .bind("$2", limit)
                     .execute()
-                    .asFlow()
-                    .flatMapConcat { result -> result.rowsUpdated.asFlow() }
-                    .single()
+                    .awaitSingle()
+            val rowsAffected = result.rowsUpdated.awaitSingle()
             if (rowsAffected > limit) {
                 error("Expected 1 row affected in event_journal, but got $rowsAffected")
             }
+            connection.commitTransaction().awaitFirstOrNull()
         } catch (ex: Exception) {
             connection.rollbackTransaction().awaitFirstOrNull()
             throw EventSourcingRepositoryException(ex)
@@ -289,73 +266,61 @@ class RelationalAggregateRepository<E, S>(
     private fun extractRecords(
         connection: Connection,
         claimId: String,
-    ): Flow<AggregateRepository.OutboxRecord<E>> {
-        try {
-            return connection
-                .createStatement(
-                    """
+    ): Flow<AggregateRepository.OutboxRecord<E>> =
+        connection
+            .createStatement(
+                """
                                     SELECT EVENT_ID, EVENT_DATA
                                     FROM EVENT_OUTBOX
                                     WHERE CLAIM_ID = $1
                                     """,
-                ).bind("$1", claimId)
-                .execute()
-                .asFlow()
-                .flatMapConcat {
-                    it
-                        .map { row, _ ->
-                            row
-                        }.asFlow()
-                        .map { row ->
-                            AggregateRepository.OutboxRecord(
-                                eventId = row.get("EVENT_ID", String::class.java)!!,
-                                event =
-                                    serializer.deserialize(
-                                        row.get("EVENT_DATA", Blob::class.java)!!.toByteArray(),
-                                    ),
-                            )
-                        }
-                }
-        } catch (ex: Exception) {
-            throw EventSourcingRepositoryException(ex)
-        }
-    }
+            ).bind("$1", claimId)
+            .execute()
+            .asFlow()
+            .flatMapConcat {
+                it
+                    .map { row, _ ->
+                        row
+                    }.asFlow()
+                    .map { row ->
+                        AggregateRepository.OutboxRecord(
+                            eventId = row.get("EVENT_ID", String::class.java)!!,
+                            event =
+                                serializer.deserialize(
+                                    row.get("EVENT_DATA", Blob::class.java)!!.toByteArray(),
+                                ),
+                        )
+                    }
+            }
 
-    override suspend fun cleanupStaleOutboxClaims(staleAfterMillis: Long): Long {
-        try {
-            return connectionFactory
-                .create()
-                .asFlow()
-                .flatMapConcat {
-                    it
-                        .createStatement(
-                            """
+    override suspend fun cleanupStaleOutboxClaims(staleAfterMillis: Long): Long =
+        useConnection {
+            it
+                .createStatement(
+                    """
                             UPDATE EVENT_OUTBOX
                             SET CLAIM_ID = NULL, CLAIMED_AT = NULL
                             WHERE CLAIM_ID IS NOT NULL
                             AND CLAIMED_AT < DATEADD('MILLISECOND', -$1, CURRENT_TIMESTAMP)
                             """,
-                        ).bind("$1", staleAfterMillis)
-                        .execute()
-                        .asFlow()
-                }.flatMapConcat { result -> result.rowsUpdated.asFlow() }
-                .single()
-        } catch (e: Exception) {
-            throw EventSourcingRepositoryException(e)
+                ).bind("$1", staleAfterMillis)
+                .execute()
+                .awaitSingle()
+                .rowsUpdated
+                .awaitSingle()
         }
-    }
-
-    suspend fun Blob.toByteArray(): ByteArray =
-        this
-            .stream()
-            .asFlow()
-            .fold(ByteArray(0)) { acc, buffer ->
-                val bytes = ByteArray(buffer.remaining())
-                buffer.get(bytes)
-                acc + bytes
-            }
 
     companion object {
         private val logger = LoggerFactory.getLogger(RelationalAggregateRepository::class.java)
     }
 }
+
+suspend fun Blob.toByteArray(): ByteArray =
+    this
+        .stream()
+        .asFlow()
+        .fold(ByteArray(0)) { acc, buffer ->
+            val bytes = ByteArray(buffer.remaining())
+            buffer.get(bytes)
+            acc + bytes
+        }

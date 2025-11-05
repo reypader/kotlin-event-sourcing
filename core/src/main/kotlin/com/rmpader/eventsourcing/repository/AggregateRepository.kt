@@ -36,7 +36,7 @@ interface AggregateRepository<E, S> {
 
     suspend fun deleteFromOutbox(eventIds: Set<String>)
 
-    suspend fun pollOutbox(limit: Long): Flow<OutboxRecord<E>>
+    fun pollOutbox(limit: Long): Flow<OutboxRecord<E>>
 
     suspend fun cleanupStaleOutboxClaims(staleAfterMillis: Long): Long
 }

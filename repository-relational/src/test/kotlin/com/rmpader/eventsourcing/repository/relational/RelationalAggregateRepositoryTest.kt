@@ -25,6 +25,7 @@ class RelationalAggregateRepositoryTest {
         TestDatabase.initializeSchema()
         repository =
             RelationalAggregateRepository(
+                "TEST",
                 TestDatabase.createR2dbcConnectionFactory(),
                 TestSerializer(),
                 TestStateSerializer(),

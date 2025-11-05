@@ -24,11 +24,18 @@ import java.time.ZoneOffset
 import java.util.UUID
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("SqlSourceToSinkFlow")
 class RelationalAggregateRepository<E, S>(
-    val connectionFactory: ConnectionFactory,
-    val serializer: Serializer<E>,
-    val stateSerializer: Serializer<S>,
+    private val tablePrefix: String,
+    private val connectionFactory: ConnectionFactory,
+    private val serializer: Serializer<E>,
+    private val stateSerializer: Serializer<S>,
 ) : AggregateRepository<E, S> {
+    init {
+        require(tablePrefix.isNotBlank()) { "tablePrefix must not be blank" }
+        require(tablePrefix.matches(Regex("^[a-zA-Z_][a-zA-Z0-9_]*$"))) { "tablePrefix must be a valid identifier" }
+    }
+
     private suspend inline fun <R> useConnection(crossinline block: suspend (Connection) -> R): R {
         try {
             val connection = connectionFactory.create().awaitSingle()
@@ -67,7 +74,7 @@ class RelationalAggregateRepository<E, S>(
                 .createStatement(
                     """
                         SELECT ENTITY_ID, EVENT_DATA, SEQUENCE_NUMBER, TIMESTAMP, ORIGIN_COMMAND_ID
-                        FROM EVENT_JOURNAL
+                        FROM ${tablePrefix}_EVENT_JOURNAL
                         WHERE ENTITY_ID = $1 AND SEQUENCE_NUMBER >= $2
                         ORDER BY SEQUENCE_NUMBER ASC
                         """,
@@ -104,7 +111,7 @@ class RelationalAggregateRepository<E, S>(
                     .createStatement(
                         """
                         SELECT ENTITY_ID, SEQUENCE_NUMBER, STATE_DATA, TIMESTAMP
-                        FROM SNAPSHOTS
+                        FROM ${tablePrefix}_SNAPSHOTS
                         WHERE ENTITY_ID = $1
                         ORDER BY SEQUENCE_NUMBER DESC LIMIT 1
                         """,
@@ -158,7 +165,7 @@ class RelationalAggregateRepository<E, S>(
             connection
                 .createStatement(
                     """
-                            INSERT INTO EVENT_OUTBOX 
+                            INSERT INTO ${tablePrefix}_EVENT_OUTBOX 
                             (EVENT_ID, EVENT_DATA)
                             VALUES ($1, $2)
                         """,
@@ -180,7 +187,7 @@ class RelationalAggregateRepository<E, S>(
             connection
                 .createStatement(
                     """
-                            INSERT INTO EVENT_JOURNAL 
+                            INSERT INTO ${tablePrefix}_EVENT_JOURNAL 
                             (ENTITY_ID, SEQUENCE_NUMBER, EVENT_DATA, ORIGIN_COMMAND_ID)
                             VALUES ($1, $2, $3, $4)
                         """,
@@ -201,11 +208,10 @@ class RelationalAggregateRepository<E, S>(
             if (eventIds.isNotEmpty()) {
                 val sql = """
                         DELETE 
-                        FROM EVENT_OUTBOX
+                        FROM ${tablePrefix}_EVENT_OUTBOX
                         WHERE EVENT_ID IN (${eventIds.indices.joinToString(",") { $$"$$${it + 1}" }})
                         """
 
-                @Suppress("SqlSourceToSinkFlow")
                 val statement = connection.createStatement(sql)
                 eventIds.forEachIndexed { index, id ->
                     statement.bind(index, id)
@@ -237,11 +243,11 @@ class RelationalAggregateRepository<E, S>(
                 connection
                     .createStatement(
                         """
-                                    UPDATE EVENT_OUTBOX
+                                    UPDATE ${tablePrefix}_EVENT_OUTBOX
                                     SET CLAIM_ID = $1, CLAIMED_AT = CURRENT_TIMESTAMP
                                     WHERE EVENT_ID IN (
                                         SELECT EVENT_ID
-                                        FROM EVENT_OUTBOX
+                                        FROM ${tablePrefix}_EVENT_OUTBOX
                                         WHERE CLAIM_ID IS NULL
                                         ORDER BY CREATED_AT ASC
                                         LIMIT $2
@@ -271,7 +277,7 @@ class RelationalAggregateRepository<E, S>(
             .createStatement(
                 """
                                     SELECT EVENT_ID, EVENT_DATA
-                                    FROM EVENT_OUTBOX
+                                    FROM ${tablePrefix}_EVENT_OUTBOX
                                     WHERE CLAIM_ID = $1
                                     """,
             ).bind("$1", claimId)
@@ -298,7 +304,7 @@ class RelationalAggregateRepository<E, S>(
             it
                 .createStatement(
                     """
-                            UPDATE EVENT_OUTBOX
+                            UPDATE ${tablePrefix}_EVENT_OUTBOX
                             SET CLAIM_ID = NULL, CLAIMED_AT = NULL
                             WHERE CLAIM_ID IS NOT NULL
                             AND CLAIMED_AT < DATEADD('MILLISECOND', -$1, CURRENT_TIMESTAMP)

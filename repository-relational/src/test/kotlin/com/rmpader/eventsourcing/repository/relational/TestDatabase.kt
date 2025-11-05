@@ -61,15 +61,15 @@ object TestDatabase {
     fun cleanDatabase() {
         createJdbcConnection().use { connection ->
             connection.createStatement().use { statement ->
-                statement.execute("DROP TABLE IF EXISTS EVENT_OUTBOX")
-                statement.execute("DROP TABLE IF EXISTS EVENT_JOURNAL")
-                statement.execute("DROP TABLE IF EXISTS SNAPSHOTS")
+                statement.execute("DROP TABLE IF EXISTS TEST_EVENT_OUTBOX")
+                statement.execute("DROP TABLE IF EXISTS TEST_EVENT_JOURNAL")
+                statement.execute("DROP TABLE IF EXISTS TEST_SNAPSHOTS")
             }
         }
     }
 
     /**
-     * Assert that exactly one event exists in EVENT_JOURNAL with the specified values
+     * Assert that exactly one event exists in TEST_EVENT_JOURNAL with the specified values
      */
     fun assertEventJournalContains(
         entityId: String,
@@ -80,7 +80,7 @@ object TestDatabase {
         createJdbcConnection().use { connection ->
             val sql = """
                 SELECT COUNT(*) as CNT
-                FROM EVENT_JOURNAL
+                FROM TEST_EVENT_JOURNAL
                 WHERE ENTITY_ID = ? AND EVENT_DATA = ? AND SEQUENCE_NUMBER = ? AND ORIGIN_COMMAND_ID = ?
             """
 
@@ -95,7 +95,7 @@ object TestDatabase {
                     val count = rs.getLong("CNT")
                     if (count != 1L) {
                         throw AssertionError(
-                            "Expected exactly 1 event in EVENT_JOURNAL with " +
+                            "Expected exactly 1 event in TEST_EVENT_JOURNAL with " +
                                 "entityId='$entityId', eventData='$eventData', " +
                                 "sequenceNumber=$sequenceNumber, originCommandId=$originCommandId, " +
                                 "but found $count",
@@ -107,7 +107,7 @@ object TestDatabase {
     }
 
     /**
-     * Assert that exactly one event exists in EVENT_OUTBOX with the specified values
+     * Assert that exactly one event exists in TEST_EVENT_OUTBOX with the specified values
      */
     fun assertEventOutboxContains(
         eventId: String,
@@ -118,7 +118,7 @@ object TestDatabase {
             val sql =
                 """
                 SELECT COUNT(*) as CNT
-                FROM EVENT_OUTBOX
+                FROM TEST_EVENT_OUTBOX
                 WHERE EVENT_ID = ? AND EVENT_DATA = ?
             """ +
                     if (isClaimed) {
@@ -136,7 +136,7 @@ object TestDatabase {
                     val count = rs.getLong("CNT")
                     if (count != 1L) {
                         throw AssertionError(
-                            "Expected exactly 1 event in EVENT_OUTBOX with " +
+                            "Expected exactly 1 event in TEST_EVENT_OUTBOX with " +
                                 "eventId='$eventId', eventData='$eventData'",
                         )
                     }
@@ -156,7 +156,7 @@ object TestDatabase {
         createJdbcConnection().use { connection ->
             val sql = """
                 SELECT COUNT(*) as CNT
-                FROM SNAPSHOTS
+                FROM TEST_SNAPSHOTS
                 WHERE ENTITY_ID = ? AND STATE_DATA = ? AND SEQUENCE_NUMBER = ?
             """
 
@@ -181,13 +181,13 @@ object TestDatabase {
     }
 
     /**
-     * Assert the total count of events for an entity in EVENT_JOURNAL
+     * Assert the total count of events for an entity in TEST_EVENT_JOURNAL
      */
     fun assertEventJournalCount(expectedCount: Long) {
         createJdbcConnection().use { connection ->
             val sql = """
                 SELECT COUNT(*) as CNT
-                FROM EVENT_JOURNAL
+                FROM TEST_EVENT_JOURNAL
             """
 
             connection.prepareStatement(sql).use { statement ->
@@ -196,7 +196,7 @@ object TestDatabase {
                     val count = rs.getLong("CNT")
                     if (count != expectedCount) {
                         throw AssertionError(
-                            "Expected $expectedCount events in EVENT_JOURNAL, but found $count",
+                            "Expected $expectedCount events in TEST_EVENT_JOURNAL, but found $count",
                         )
                     }
                 }
@@ -205,13 +205,13 @@ object TestDatabase {
     }
 
     /**
-     * Assert the total count of events for an entity in EVENT_OUTBOX
+     * Assert the total count of events for an entity in TEST_EVENT_OUTBOX
      */
     fun assertEventOutboxCount(expectedCount: Long) {
         createJdbcConnection().use { connection ->
             val sql = """
                 SELECT COUNT(*) as CNT
-                FROM EVENT_OUTBOX
+                FROM TEST_EVENT_OUTBOX
             """
 
             connection.prepareStatement(sql).use { statement ->
@@ -221,7 +221,7 @@ object TestDatabase {
                     val count = rs.getLong("CNT")
                     if (count != expectedCount) {
                         throw AssertionError(
-                            "Expected $expectedCount events in EVENT_OUTBOX, but found $count",
+                            "Expected $expectedCount events in TEST_EVENT_OUTBOX, but found $count",
                         )
                     }
                 }
@@ -236,7 +236,7 @@ object TestDatabase {
         createJdbcConnection().use { connection ->
             val sql = """
                 SELECT COUNT(*) as CNT
-                FROM SNAPSHOTS
+                FROM TEST_SNAPSHOTS
             """
 
             connection.prepareStatement(sql).use { statement ->
@@ -261,7 +261,7 @@ object TestDatabase {
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
-                INSERT INTO EVENT_JOURNAL (ENTITY_ID, SEQUENCE_NUMBER, EVENT_DATA, ORIGIN_COMMAND_ID)
+                INSERT INTO TEST_EVENT_JOURNAL (ENTITY_ID, SEQUENCE_NUMBER, EVENT_DATA, ORIGIN_COMMAND_ID)
                 VALUES (?, ?, ?, ?)
             """
 
@@ -281,7 +281,7 @@ object TestDatabase {
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
-                INSERT INTO EVENT_OUTBOX (EVENT_ID, EVENT_DATA)
+                INSERT INTO TEST_EVENT_OUTBOX (EVENT_ID, EVENT_DATA)
                 VALUES (?, ?)
             """
 
@@ -300,7 +300,7 @@ object TestDatabase {
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
-                INSERT INTO EVENT_OUTBOX (EVENT_ID, EVENT_DATA, CLAIMED_AT, CLAIM_ID)
+                INSERT INTO TEST_EVENT_OUTBOX (EVENT_ID, EVENT_DATA, CLAIMED_AT, CLAIM_ID)
                 VALUES (?, ?, ?, ?)
             """
 
@@ -321,7 +321,7 @@ object TestDatabase {
     ) {
         createJdbcConnection().use { connection ->
             val sql = """
-                INSERT INTO SNAPSHOTS (ENTITY_ID, SEQUENCE_NUMBER, STATE_DATA, TIMESTAMP)
+                INSERT INTO TEST_SNAPSHOTS (ENTITY_ID, SEQUENCE_NUMBER, STATE_DATA, TIMESTAMP)
                 VALUES (?, ?, ?, CURRENT_TIMESTAMP)
             """
 
@@ -337,7 +337,7 @@ object TestDatabase {
     suspend fun lockRecordsThen(block: suspend () -> Unit) {
         createJdbcConnection().apply { autoCommit = false }.also {
             val sql = """
-                SELECT * FROM EVENT_OUTBOX FOR UPDATE
+                SELECT * FROM TEST_EVENT_OUTBOX FOR UPDATE
             """
             it.prepareStatement(sql).use { statement ->
                 statement.execute()

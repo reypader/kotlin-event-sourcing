@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package com.rmpader.eventsourcing.coordination.transport.ktor.protobuf;
+
+option java_multiple_files = true;
+option java_package = "com.rmpader.eventsourcing.coordination.transport.ktor.protobuf";
+
+// Command envelope for transporting commands between nodes
+message CommandEnvelope {
+  string aggregate_alias = 1;
+
+  string aggregate_key = 2;
+
+  string command_id = 3;
+
+  bytes command_data = 4;
+}
+
+// Response from command execution
+message CommandResponse {
+  bool success = 1;
+
+  bytes state_data = 2;
+
+  string error_code = 3;
+
+  string error_message = 4;
+}

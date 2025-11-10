@@ -8,5 +8,6 @@ include(
     "core",
     "repository-relational",
     "coordination-kubernetes",
-    "coordination-aws"
+    "coordination-aws",
+    "transport-ktor",
 )

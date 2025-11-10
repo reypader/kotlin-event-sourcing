@@ -26,4 +26,10 @@ subprojects {
     configure<org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension> {
         jvmToolchain(21)
     }
+    configure<org.jlleitschuh.gradle.ktlint.KtlintExtension> {
+        filter {
+            exclude("**/generated/**")
+            exclude { element -> element.file.path.contains("generated") }
+        }
+    }
 }

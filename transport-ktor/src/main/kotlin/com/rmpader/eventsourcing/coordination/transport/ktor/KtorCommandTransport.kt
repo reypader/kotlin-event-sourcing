@@ -5,8 +5,6 @@ import com.rmpader.eventsourcing.CommandRejectionException
 import com.rmpader.eventsourcing.coordination.CommandTransport
 import com.rmpader.eventsourcing.coordination.transport.ktor.protobuf.CommandEnvelope
 import com.rmpader.eventsourcing.coordination.transport.ktor.protobuf.CommandResponse
-import com.rmpader.eventsourcing.coordination.transport.ktor.protobuf.commandEnvelope
-import com.rmpader.eventsourcing.coordination.transport.ktor.protobuf.commandResponse
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
@@ -15,6 +13,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.protobuf.protobuf
+import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.install
 import io.ktor.server.engine.EmbeddedServer
@@ -23,6 +22,7 @@ import io.ktor.server.netty.Netty
 import io.ktor.server.netty.NettyApplicationEngine
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
+import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import kotlinx.serialization.ExperimentalSerializationApi
 import org.slf4j.Logger
@@ -54,25 +54,33 @@ class KtorCommandTransport : CommandTransport {
             }
         }
 
+    fun Application.configureRouting() {
+        install(serverContentNegotiation) {
+            protobuf()
+        }
+        routing {
+            inboundPost("/command") {
+                handleCommandRequest(call)
+            }
+
+            get("/health") {
+                call.respond(HttpStatusCode.OK, mapOf("status" to "healthy"))
+            }
+        }
+    }
+
     fun listenForCommands(port: Int) {
         server =
             embeddedServer(Netty, port = port) {
-                install(serverContentNegotiation) {
-                    protobuf()
-                }
-                routing {
-                    inboundPost("/command") {
-                        handleCommandRequest(call)
-                    }
-                }
+                configureRouting()
             }
         server.start(wait = false)
-        println("Ktor server started on port 8080")
+        logger.info("Ktor server started on port $port")
     }
 
     fun stopListening() {
-        println("Stopping Ktor")
-        server.stop(1000, 2000) // Graceful shutdown with 1s grace period and 2s timeout
+        logger.info("Stopping Ktor")
+        server.stop(1000, 2000)
     }
 
     override suspend fun sendToNode(
@@ -81,20 +89,16 @@ class KtorCommandTransport : CommandTransport {
         commandId: String,
         commandData: ByteArray,
     ): ByteArray {
-        // TODO make this a bit more configurable
         val baseUrl = "http://$nodeId"
-
         val aggregateAlias = aggregateKey.entityAlias
 
         val envelope =
-            commandEnvelope {
-                this.aggregateAlias = aggregateAlias
-                this.aggregateKey = aggregateKey.toString()
-                this.commandId = commandId
-                this.commandData =
-                    com.google.protobuf.ByteString
-                        .copyFrom(commandData)
-            }
+            CommandEnvelope(
+                aggregateAlias = aggregateAlias,
+                aggregateKey = aggregateKey.toString(),
+                commandId = commandId,
+                commandData = commandData,
+            )
 
         try {
             val response =
@@ -103,23 +107,21 @@ class KtorCommandTransport : CommandTransport {
                     setBody(envelope)
                 }
 
-            if (response.status != HttpStatusCode.OK) {
+            if (response.status.value >= 500) {
                 throw CommandRejectionException(
                     reason = "Remote node returned ${response.status}",
                     errorCode = "TRANSPORT_ERROR",
                 )
+            } else {
+                val commandResponse = response.body<CommandResponse>()
+                if (!commandResponse.success) {
+                    throw CommandRejectionException(
+                        reason = commandResponse.errorMessage,
+                        errorCode = commandResponse.errorCode,
+                    )
+                }
+                return commandResponse.stateData
             }
-
-            val commandResponse = response.body<CommandResponse>()
-
-            if (!commandResponse.success) {
-                throw CommandRejectionException(
-                    reason = commandResponse.errorMessage,
-                    errorCode = commandResponse.errorCode,
-                )
-            }
-
-            return commandResponse.stateData.toByteArray()
         } catch (e: CommandRejectionException) {
             throw e
         } catch (e: Exception) {
@@ -132,10 +134,7 @@ class KtorCommandTransport : CommandTransport {
         }
     }
 
-    /**
-     * Handle incoming command request
-     */
-    private suspend fun handleCommandRequest(call: ApplicationCall) {
+    internal suspend fun handleCommandRequest(call: ApplicationCall) {
         try {
             val envelope = call.receive<CommandEnvelope>()
             logger.debug("Received command: ${envelope.commandId} for aggregate ${envelope.aggregateAlias}:${envelope.aggregateKey}")
@@ -146,39 +145,37 @@ class KtorCommandTransport : CommandTransport {
                 registration.handleCommand(
                     aggregateKey = AggregateKey.from(envelope.aggregateKey),
                     commandId = envelope.commandId,
-                    commandData = envelope.commandData.toByteArray(),
+                    commandData = envelope.commandData,
                 )
 
             call.respond(
                 HttpStatusCode.OK,
-                commandResponse {
-                    this.success = true
-                    this.stateData =
-                        com.google.protobuf.ByteString
-                            .copyFrom(stateData)
-                },
+                CommandResponse(
+                    success = true,
+                    stateData = stateData,
+                ),
             )
         } catch (e: CommandRejectionException) {
             logger.warn("Command rejected: ${e.reason}", e)
             call.respond(
                 HttpStatusCode.BadRequest,
-                commandResponse {
-                    this.success = false
-                    this.stateData = com.google.protobuf.ByteString.EMPTY
-                    this.errorCode = e.errorCode
-                    this.errorMessage = e.reason
-                },
+                CommandResponse(
+                    success = false,
+                    stateData = ByteArray(0),
+                    errorCode = e.errorCode,
+                    errorMessage = e.reason,
+                ),
             )
         } catch (e: Exception) {
             logger.error("Error processing command", e)
             call.respond(
-                HttpStatusCode.InternalServerError,
-                commandResponse {
-                    this.success = false
-                    this.stateData = com.google.protobuf.ByteString.EMPTY
-                    this.errorCode = "INTERNAL_ERROR"
-                    this.errorMessage = e.message ?: "Unknown error"
-                },
+                HttpStatusCode.UnprocessableEntity,
+                CommandResponse(
+                    success = false,
+                    stateData = ByteArray(0),
+                    errorCode = "INTERNAL_ERROR",
+                    errorMessage = e.message ?: "Unknown error",
+                ),
             )
         }
     }
